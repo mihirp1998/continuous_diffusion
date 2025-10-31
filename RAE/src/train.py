@@ -22,6 +22,8 @@ from copy import deepcopy
 from glob import glob
 from time import time
 import argparse
+import ipdb
+st = ipdb.set_trace
 import logging
 
 import math
@@ -116,6 +118,7 @@ def main(args):
     """Trains a new SiT model using config-driven hyperparameters."""
     if not torch.cuda.is_available():
         raise RuntimeError("Training currently requires at least one GPU.")
+    st()
 
     (
         rae_config,
