@@ -6,3 +6,7 @@ RAE/models
 diffusion-data-constraint/data
 *.so
 *.o
+*.safetensors
+*/tokenizer.json
+*.png
+*.jpg
