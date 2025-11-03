@@ -118,7 +118,7 @@ def main(args):
     """Trains a new SiT model using config-driven hyperparameters."""
     if not torch.cuda.is_available():
         raise RuntimeError("Training currently requires at least one GPU.")
-    st()
+    # st()
 
     (
         rae_config,

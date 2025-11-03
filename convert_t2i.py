@@ -2,11 +2,13 @@ from datasets import load_dataset
 import cv2
 import numpy as np
 import textwrap
+from tqdm import tqdm
 import ipdb
 st = ipdb.set_trace
 import os
 
 root_dir = "/data/user_data/mprabhud/tiny_story_dataset"
+root_dir  = "/home/mprabhud/datasets/tinystories"
 # Load TinyStories dataset
 print("Loading TinyStories dataset...")
 dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
@@ -85,12 +87,12 @@ def create_text_image(text, image_size=512, font_scale=0.6, font_thickness=1):
     
     return img
 # st()
-from tqdm import tqdm
+
 # Generate images from first 10 stories
 print("Creating images from TinyStories...")
 for i, story in enumerate(tqdm(dataset)):
-    # if i >= 10:  # Limit to first 10 stories
-    #     break
+    if i >= 10:  # Limit to first 10 stories
+        break
     
     text = story['text']
     img = create_text_image(text)
@@ -101,6 +103,6 @@ for i, story in enumerate(tqdm(dataset)):
         cv2.imwrite(filename, img)
         with open(f"{root_dir}/text_dataset/story_{i+1:08d}.txt", "w") as f:
             f.write(text)
-d        # print(f"Saved: {filename}")
+        # print(f"Saved: {filename}")
 
 # print("Done! Images saved in 'tinystories_images' directory")

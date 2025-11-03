@@ -51,8 +51,7 @@ We release three kind of models: RAE decoders, DiT<sup>DH</sup> diffusion transf
 
 cd RAE
 pip install huggingface_hub
-hf download nyu-visionx/RAE-collections \
-  --local-dir models 
+hf download nyu-visionx/RAE-collections --local-dir models 
 ```
 
 
