@@ -6,12 +6,13 @@ A minimal training script for SiT using PyTorch DDP.
 """
 import os
 import torch
+import cv2
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
@@ -25,6 +26,7 @@ import argparse
 import ipdb
 st = ipdb.set_trace
 import logging
+import warnings
 
 import math
 from torch.cuda.amp import autocast
@@ -33,10 +35,11 @@ from stage1 import RAE
 from stage2.models import Stage2ModelProtocol
 from stage2.transport import create_transport, Sampler
 from utils.train_utils import parse_configs
+from utils.basic_utils import create_text_image
 from utils.model_utils import instantiate_from_config
 from utils import wandb_utils
 from utils.optim_utils import build_optimizer, build_scheduler
-
+from datasets import load_dataset
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -107,6 +110,90 @@ def center_crop_arr(pil_image, image_size):
     crop_y = (arr.shape[0] - image_size) // 2
     crop_x = (arr.shape[1] - image_size) // 2
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
+
+
+#################################################################################
+#                              Custom Dataset Class                             #
+#################################################################################
+
+class TextDataset(Dataset):
+    """
+    Custom image dataset class that loads images from a directory structure.
+    
+    Supports both ImageFolder-style structure (with class subdirectories) and
+    flat directory structure (all images in one directory).
+    
+    Args:
+        root (str): Root directory path containing images
+        transform (callable, optional): Optional transform to be applied on a sample
+        class_subdirs (bool): If True, expects ImageFolder structure with class subdirectories.
+                             If False, treats root as a flat directory with all images.
+    """
+    
+    def __init__(self, root, transform=None, class_subdirs=True):
+        self.root = root
+        self.transform = transform
+        
+        # Load TinyStories dataset
+        print("Loading TinyStories dataset...")
+        dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+        
+        # Convert dataset to list to get length and indexing
+        self.stories = []
+        print("Converting dataset to list...")
+        for i, story in enumerate(dataset):
+            self.stories.append(story['text'])
+            if i >= 100:  # Limit to first 10k stories for memory
+                break
+        
+        print(f"Loaded {len(self.stories)} stories")
+
+    def __len__(self):
+        return len(self.stories)
+    
+    def __getitem__(self, idx):
+        """
+        Get an image created from text and its label.
+        
+        Args:
+            idx (int): Index of the sample
+            
+        Returns:
+            tuple: (image, label) where image is a PIL Image or transformed tensor,
+                   and label is an integer class index
+        """
+        text = self.stories[idx]
+        
+        try:
+            # Create image from text using create_text_image            
+            img_array = create_text_image(text)
+            
+            if img_array is None:
+                # If text is too long, try next story
+                if idx < len(self.stories) - 1:
+                    return self.__getitem__(idx + 1)
+                else:
+                    return self.__getitem__(0)
+            
+            # Convert BGR to RGB (cv2 uses BGR, PIL uses RGB)
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
+            
+            # Convert numpy array to PIL Image
+            from PIL import Image
+            image = Image.fromarray(img_array)
+            
+        except Exception as e:
+            # If image creation fails, try to load a different story
+            warnings.warn(f"Failed to create image for story {idx}: {e}. Trying next story.")
+            if idx < len(self.stories) - 1:
+                return self.__getitem__(idx + 1)
+            else:
+                return self.__getitem__(0)
+        # Apply transform if provided
+        if self.transform is not None:
+            image = self.transform(image)
+        
+        return image
 
 
 #################################################################################
@@ -274,11 +361,17 @@ def main(cfg: DictConfig):
         opt.load_state_dict(opt_state)
 
     transform = transforms.Compose([
-        transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
-        transforms.RandomHorizontalFlip(),
+        # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
+        # transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
     ])
-    dataset = ImageFolder(cfg.data_path, transform=transform)
+    # st()
+    if cfg.dataset == "imagenet":
+        dataset = ImageFolder(cfg.data_path, transform=transform)
+    else:
+        dataset = TextDataset(cfg.data_path, transform=transform)
+    
+    # st()
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,

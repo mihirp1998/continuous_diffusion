@@ -90,3 +90,4 @@ precision: bf16
 global_seed: null
 ckpt: null
 wandb: true
+dataset: imagenet

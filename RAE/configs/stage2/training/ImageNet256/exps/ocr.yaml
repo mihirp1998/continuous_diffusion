@@ -1,0 +1,4 @@
+# @package _global_
+
+stage_1:
+  target: ocr
