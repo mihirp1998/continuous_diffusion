@@ -387,7 +387,7 @@ class DeepseekOCRModel(DeepseekV2Model):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         
-        st()
+        # st()
         if inputs_embeds is None and not return_image_features:
             # inputs_embeds = self.embed_tokens(input_ids)
             inputs_embeds = self.get_input_embeddings()(input_ids)

@@ -143,9 +143,10 @@ class TextDataset(Dataset):
         print("Converting dataset to list...")
         for i, story in enumerate(dataset):
             self.stories.append(story['text'])
-            if i >= 100:  # Limit to first 10k stories for memory
+            if i >= 10000:  # Limit to first 10k stories for memory
                 break
-        
+        # create_text_image(self.stories[0])
+        # st()
         print(f"Loaded {len(self.stories)} stories")
 
     def __len__(self):
@@ -162,11 +163,13 @@ class TextDataset(Dataset):
             tuple: (image, label) where image is a PIL Image or transformed tensor,
                    and label is an integer class index
         """
+        # print(f"idx: {idx}")
         text = self.stories[idx]
+        
         
         try:
             # Create image from text using create_text_image            
-            img_array = create_text_image(text)
+            img_array, txt_array = create_text_image(text)
             
             if img_array is None:
                 # If text is too long, try next story
@@ -193,7 +196,7 @@ class TextDataset(Dataset):
         if self.transform is not None:
             image = self.transform(image)
         
-        return image
+        return image, text
 
 
 #################################################################################
@@ -331,6 +334,7 @@ def main(cfg: DictConfig):
         logger = create_logger(None)
 
     rae: RAE = instantiate_from_config(rae_config).to(device)
+    
     rae.eval()
 
     model: Stage2ModelProtocol = instantiate_from_config(model_config).to(device)
@@ -360,15 +364,21 @@ def main(cfg: DictConfig):
     if opt_state is not None:
         opt.load_state_dict(opt_state)
 
-    transform = transforms.Compose([
-        # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
-        # transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-    ])
+
     # st()
     if cfg.dataset == "imagenet":
+        transform = transforms.Compose([
+            transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+        ])        
         dataset = ImageFolder(cfg.data_path, transform=transform)
     else:
+        transform = transforms.Compose([
+            # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
+            # transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+        ])        
         dataset = TextDataset(cfg.data_path, transform=transform)
     
     # st()
@@ -468,11 +478,13 @@ def main(cfg: DictConfig):
         accum_counter = 0
         step_loss_accum = 0.0
         for x, y in loader:
+            st()
             x = x.to(device)
-            y = y.to(device)
+            # y = y.to(device)
+            
             with torch.no_grad():
                 x = rae.encode(x)
-            model_kwargs = dict(y=y)
+            model_kwargs = dict()
             with autocast(**autocast_kwargs):
                 loss_tensor = transport.training_losses(model, x, model_kwargs)["loss"].mean()
             step_loss_accum += loss_tensor.item()

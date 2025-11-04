@@ -1,4 +1,4 @@
-from transformers import Dinov2WithRegistersModel
+# from transformers import Dinov2WithRegistersModel
 from torch import nn
 import torch
 from math import *

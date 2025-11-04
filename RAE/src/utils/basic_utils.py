@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import ipdb
+st = ipdb.set_trace
 
 
 def create_text_image(text, image_size=512, font_scale=0.6, font_thickness=1):
@@ -24,7 +26,7 @@ def create_text_image(text, image_size=512, font_scale=0.6, font_thickness=1):
     lines = []
     current_line = []
     break_because_of_max_lines = False
-    
+    # st()
     for word in words:
         # Test if adding this word fits
         test_line = ' '.join(current_line + [word])
@@ -36,7 +38,7 @@ def create_text_image(text, image_size=512, font_scale=0.6, font_thickness=1):
             if current_line:
                 lines.append(' '.join(current_line))
                 if len(lines) >= max_lines:
-                    print(f"Reached max lines: {len(lines)}")
+                    # print(f"Reached max lines: {len(lines)}")
                     break_because_of_max_lines = True
                     break
             # Handle very long words that don't fit even alone
@@ -47,19 +49,19 @@ def create_text_image(text, image_size=512, font_scale=0.6, font_thickness=1):
                     chars_per_line = int(len(word) * available_width / word_width) or 1
                     for j in range(0, len(word), chars_per_line):
                         if len(lines) >= max_lines:
-                            print(f"Reached max lines: {len(lines)}")    
+                            # print(f"Reached max lines: {len(lines)}")    
                             break_because_of_max_lines = True
                             break
                         lines.append(word[j:j+chars_per_line])
                     continue
             current_line = [word]
-    
+    # st()
     # Add remaining line if space
     if current_line and len(lines) < max_lines:
         lines.append(' '.join(current_line))
     
     if break_because_of_max_lines:
-        return None
+        return None, text
     
     # Draw text line by line
     for i, line in enumerate(lines):
@@ -67,4 +69,4 @@ def create_text_image(text, image_size=512, font_scale=0.6, font_thickness=1):
         cv2.putText(img, line, (margin, y_position), 
                    font, font_scale, (0, 0, 0), font_thickness, cv2.LINE_AA)
     
-    return img
+    return img, text

@@ -4,8 +4,9 @@ st = ipdb.set_trace
 import torch
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-# model_name = 'deepseek-ai/DeepSeek-OCR'
+model_name = 'deepseek-ai/DeepSeek-OCR'
 model_name = "DeepSeek-OCR-code"  # Commented out to use HuggingFace model
+# model_name = "tmp/DeepSeek-OCR"
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 model = AutoModel.from_pretrained(model_name, _attn_implementation='flash_attention_2', trust_remote_code=True, use_safetensors=True)
 model = model.eval().cuda().to(torch.bfloat16)
