@@ -3,9 +3,9 @@ from typing import List, Tuple
 
 
 
-def parse_configs(config_path: str) -> Tuple[DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig]:
+def parse_configs(config) -> Tuple[DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig]:
     """Load a config file and return component sections as DictConfigs."""
-    config = OmegaConf.load(config_path)
+    # config = OmegaConf.load(config_path)
     rae_config = config.get("stage_1", None)
     stage2_config = config.get("stage_2", None)
     transport_config = config.get("transport", None)

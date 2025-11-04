@@ -367,7 +367,6 @@ class DeepseekOCRModel(DeepseekV2Model):
         embed_std = 1 / torch.sqrt(torch.tensor(n_embed, dtype=torch.float32))
         self.image_newline = nn.Parameter(torch.randn(n_embed) * embed_std)
         self.view_seperator = nn.Parameter(torch.randn(n_embed) * embed_std)
-        self.return_image_features = False
 
     
     def forward(
@@ -382,11 +381,14 @@ class DeepseekOCRModel(DeepseekV2Model):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         images_seq_mask: Optional[torch.FloatTensor] = None,
+        images_features: Optional[torch.FloatTensor] = None,
         images_spatial_crop: Optional[torch.FloatTensor] = None,
+        return_image_features: Optional[bool] = False,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-
-        if inputs_embeds is None and not self.return_image_features:
+        
+        st()
+        if inputs_embeds is None and not return_image_features:
             # inputs_embeds = self.embed_tokens(input_ids)
             inputs_embeds = self.get_input_embeddings()(input_ids)
 
@@ -395,118 +397,125 @@ class DeepseekOCRModel(DeepseekV2Model):
         sam_model = getattr(self, 'sam_model', None)
         # sam_model = self.sam_model
         vision_model = getattr(self, 'vision_model', None)
+        # st()
 
 
 
-        if sam_model is not None and (input_ids.shape[1] != 1 or self.training) and torch.sum(images[0][1]).item() != 0:
+        if (sam_model is not None and (input_ids.shape[1] != 1 or self.training) and (torch.sum(images[0][1]).item() != 0 or images_features is not None)) :
 
             idx = 0
             
-            # sam_model = torch.jit.script(sam_model)
-            all_image_features = []
-            
-            # start_time = time.time()
-            for image, crop_shape in zip(images, images_spatial_crop):
-                images_in_this_batch = []
-
-                patches = image[0]
-                image_ori = image[1]
-
-                with torch.no_grad():
-                # with torch.inference_mode(): 
-                    
-                    if torch.sum(patches).item() != 0:
-                        # P, C, H, W = patches.shape
-                        crop_flag = 1
-                        local_features_1 = sam_model(patches)
-
-                        local_features_2 = vision_model(patches, local_features_1)  
-                        # vit_time = time.time()
-                        local_features = torch.cat((local_features_2[:, 1:], local_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
-                        local_features = self.projector(local_features)
-
-
-                        global_features_1 = sam_model(image_ori)
-                        global_features_2 = vision_model(image_ori, global_features_1) 
-                        global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
-                        global_features = self.projector(global_features)
-
-                        print('=====================')
-                        print('BASE: ', global_features.shape)
-                        print('PATCHES: ', local_features.shape)
-                        print('=====================')
-
-                        _, hw, n_dim = global_features.shape
-                        h = w = int(hw ** 0.5)
-
-                        _2, hw2, n_dim2 = local_features.shape
-                        h2 = w2 = int(hw2 ** 0.5)
-
-                        width_crop_num, height_crop_num = crop_shape[0], crop_shape[1]
-
-                        global_features = global_features.view(h, w, n_dim)
-
-                        global_features = torch.cat(
-                            [global_features, self.image_newline[None, None, :].expand(h, 1, n_dim)], dim=1
-                        )
-
-                        global_features = global_features.view(-1, n_dim)
-
-
-                        local_features = local_features.view(height_crop_num, width_crop_num, h2, w2, n_dim2).permute(0, 2, 1, 3, 4).reshape(height_crop_num*h2, width_crop_num*w2, n_dim2)
-                        local_features = torch.cat(
-                            [local_features, self.image_newline[None, None, :].expand(height_crop_num * h2, 1, n_dim2)], dim=1
-                        )
-                        local_features = local_features.view(-1, n_dim2)
-
-                        global_local_features = torch.cat([local_features, global_features, self.view_seperator[None, :]], dim=0)
-
-                        # end_time = time.time()
-
-                        # print('sam: ', sam_time - start_time)
-                        # print('vit: ', vit_time - sam_time)
-                        # print('all: ', end_time - start_time)
-
-                        # exit()
-                   
-                    else:
-                        global_features_1 = sam_model(image_ori)
-                        global_features_2 = vision_model(image_ori, global_features_1) 
-                        global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
-                        global_features = self.projector(global_features)
-                        print('=====================')
-                        print('BASE: ', global_features.shape)
-                        print('NO PATCHES')
-                        print('=====================')
-                        _, hw, n_dim = global_features.shape
-                        h = w = int(hw ** 0.5)
-
-
-                        global_features = global_features.view(h, w, n_dim)
-
-                        global_features = torch.cat(
-                            [global_features, self.image_newline[None, None, :].expand(h, 1, n_dim)], dim=1
-                        )
-
-                        global_features = global_features.view(-1, n_dim)
-
-                        global_local_features = torch.cat([global_features, self.view_seperator[None, :]], dim=0)
-
-                    images_in_this_batch.append(global_local_features)
+            if images_features is not None:
+                all_image_features = images_features
+                for image_feature in all_image_features:
+                    inputs_embeds[idx].masked_scatter_(images_seq_mask[idx].unsqueeze(-1).cuda(), image_feature)
+                    idx += 1
+            else:
+                # sam_model = torch.jit.script(sam_model)
+                all_image_features = []
                 
+                # start_time = time.time()
+                for image, crop_shape in zip(images, images_spatial_crop):
+                    images_in_this_batch = []
 
-                # print(inputs_embeds.shape)
+                    patches = image[0]
+                    image_ori = image[1]
 
-                if images_in_this_batch:
-                    images_in_this_batch = torch.cat(images_in_this_batch, dim=0)
-                    if not self.return_image_features:
-                        inputs_embeds[idx].masked_scatter_(images_seq_mask[idx].unsqueeze(-1).cuda(), images_in_this_batch)
-                    all_image_features.append(images_in_this_batch)
+                    with torch.no_grad():
+                    # with torch.inference_mode(): 
+                        
+                        if torch.sum(patches).item() != 0:
+                            # P, C, H, W = patches.shape
+                            crop_flag = 1
+                            local_features_1 = sam_model(patches)
 
+                            local_features_2 = vision_model(patches, local_features_1)  
+                            # vit_time = time.time()
+                            local_features = torch.cat((local_features_2[:, 1:], local_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
+                            local_features = self.projector(local_features)
+
+
+                            global_features_1 = sam_model(image_ori)
+                            global_features_2 = vision_model(image_ori, global_features_1) 
+                            global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
+                            global_features = self.projector(global_features)
+
+                            print('=====================')
+                            print('BASE: ', global_features.shape)
+                            print('PATCHES: ', local_features.shape)
+                            print('=====================')
+
+                            _, hw, n_dim = global_features.shape
+                            h = w = int(hw ** 0.5)
+
+                            _2, hw2, n_dim2 = local_features.shape
+                            h2 = w2 = int(hw2 ** 0.5)
+
+                            width_crop_num, height_crop_num = crop_shape[0], crop_shape[1]
+
+                            global_features = global_features.view(h, w, n_dim)
+
+                            global_features = torch.cat(
+                                [global_features, self.image_newline[None, None, :].expand(h, 1, n_dim)], dim=1
+                            )
+
+                            global_features = global_features.view(-1, n_dim)
+
+
+                            local_features = local_features.view(height_crop_num, width_crop_num, h2, w2, n_dim2).permute(0, 2, 1, 3, 4).reshape(height_crop_num*h2, width_crop_num*w2, n_dim2)
+                            local_features = torch.cat(
+                                [local_features, self.image_newline[None, None, :].expand(height_crop_num * h2, 1, n_dim2)], dim=1
+                            )
+                            local_features = local_features.view(-1, n_dim2)
+
+                            global_local_features = torch.cat([local_features, global_features, self.view_seperator[None, :]], dim=0)
+
+                            # end_time = time.time()
+
+                            # print('sam: ', sam_time - start_time)
+                            # print('vit: ', vit_time - sam_time)
+                            # print('all: ', end_time - start_time)
+
+                            # exit()
+                    
+                        else:
+                            global_features_1 = sam_model(image_ori)
+                            global_features_2 = vision_model(image_ori, global_features_1) 
+                            global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
+                            global_features = self.projector(global_features)
+                            print('=====================')
+                            print('BASE: ', global_features.shape)
+                            print('NO PATCHES')
+                            print('=====================')
+                            _, hw, n_dim = global_features.shape
+                            h = w = int(hw ** 0.5)
+
+
+                            global_features = global_features.view(h, w, n_dim)
+
+                            global_features = torch.cat(
+                                [global_features, self.image_newline[None, None, :].expand(h, 1, n_dim)], dim=1
+                            )
+
+                            global_features = global_features.view(-1, n_dim)
+
+                            global_local_features = torch.cat([global_features, self.view_seperator[None, :]], dim=0)
+
+                        images_in_this_batch.append(global_local_features)
                     
 
-                idx += 1
-        if self.return_image_features:
+                    # print(inputs_embeds.shape)
+
+                    if images_in_this_batch:
+                        images_in_this_batch = torch.cat(images_in_this_batch, dim=0)
+                        if not return_image_features:
+                            inputs_embeds[idx].masked_scatter_(images_seq_mask[idx].unsqueeze(-1).cuda(), images_in_this_batch)
+                        all_image_features.append(images_in_this_batch)
+
+                        
+
+                    idx += 1
+        if return_image_features:
             return all_image_features
         else:
             return super(DeepseekOCRModel, self).forward(
@@ -552,7 +561,9 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         images_seq_mask: Optional[torch.FloatTensor] = None,
+        images_features: Optional[torch.FloatTensor] = None,
         images_spatial_crop: Optional[torch.FloatTensor] = None,
+        return_image_features: Optional[bool] = False,
         return_dict: Optional[bool] = None,
         
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -575,8 +586,10 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             output_hidden_states=output_hidden_states,
             images=images,
             images_seq_mask = images_seq_mask,
+            images_features = images_features,
             images_spatial_crop = images_spatial_crop,
-            return_dict=return_dict
+            return_dict=return_dict,
+            return_image_features=return_image_features
             
         )
 
@@ -620,6 +633,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
     ):
         # Omit tokens covered by past_key_values
+        # st()
         past_length = 0
         if past_key_values is not None:
             if isinstance(past_key_values, Cache):
@@ -687,6 +701,8 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                 "images": kwargs.get("images", None),
                 "images_seq_mask": kwargs.get("images_seq_mask", None),
                 "images_spatial_crop": kwargs.get("images_spatial_crop", None),
+                "images_features": kwargs.get("images_features", None),
+                "return_image_features": kwargs.get("return_image_features", False),
             }
         )
         return model_inputs
@@ -702,7 +718,6 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
     def get_image_features(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False, return_image_features=False):
         self.disable_torch_init()
-        self.model.return_image_features = return_image_features
 
         os.makedirs(output_path, exist_ok=True)
         os.makedirs(f'{output_path}/images', exist_ok=True)
@@ -925,7 +940,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                     # max_new_tokens=8192,
                     # no_repeat_ngram_size = 35,
                     use_cache = True,
-                    # return_image_features = True                    
+                    return_image_features = return_image_features                    
                 )
                 # output_ids = self.generate(
                 #     input_ids.unsqueeze(0).cuda(),
@@ -985,27 +1000,29 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         else:
             assert False, f'prompt is none!'
         
+        # st()
         prompt = format_messages(conversations=conversation, sft_format='plain', system_prompt='')
 
         patch_size = 16
         downsample_ratio = 4
-        images = load_pil_images(conversation)
+
 
         valid_img_tokens = 0
         ratio = 1
-
-        image_draw = images[0].copy()
-
-        w,h = image_draw.size
-        # print(w, h)
-        ratio = 1 - ((max(w, h) - min(w, h)) / (max(w, h)))
-    
-
-        image_transform=BasicImageTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True)
-        images_seq_mask = []
-
-        image_token = '<image>'
         image_token_id = 128815
+        image_token = '<image>'
+        if image_features is None:
+            images = load_pil_images(conversation)
+            image_draw = images[0].copy()
+            w,h = image_draw.size
+            # print(w, h)
+            ratio = 1 - ((max(w, h) - min(w, h)) / (max(w, h)))
+            image_transform=BasicImageTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True)
+        else:
+            images = [None] * len(image_features)
+            
+        # st()
+        images_seq_mask = []
         text_splits = prompt.split(image_token)
 
         images_list, images_crop_list, images_seq_mask = [], [], []
@@ -1018,6 +1035,9 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             images_seq_mask += [False] * len(tokenized_sep)
 
             if crop_mode:
+                
+                if image_features is not None:
+                    assert False, 'crop_mode is not supported for image features'
 
                 if image.size[0] <= 640 and image.size[1] <= 640:
                     crop_ratio = [1, 1]
@@ -1087,13 +1107,14 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                 # print(image.size, (best_width, best_height)) # check the select_best_resolutions func
 
                 """process the global view"""
-                if image_size <= 640:
-                    print('directly resize')
-                    image = image.resize((image_size, image_size))
-                # else:
-                global_view = ImageOps.pad(image, (image_size, image_size),
-                                        color=tuple(int(x * 255) for x in image_transform.mean))
-                images_list.append(image_transform(global_view).to(torch.bfloat16))
+                if image is not None:
+                    if image_size <= 640:
+                        print('directly resize')
+                        image = image.resize((image_size, image_size))
+                
+                    global_view = ImageOps.pad(image, (image_size, image_size),
+                                            color=tuple(int(x * 255) for x in image_transform.mean))
+                    images_list.append(image_transform(global_view).to(torch.bfloat16))
 
                 if base_size == 1024:
                     valid_img_tokens += int(256 * ratio)
@@ -1164,6 +1185,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         images=[(images_crop.cuda(), images_ori.cuda())],
                         images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
                         images_spatial_crop = images_spatial_crop,
+                        images_features = image_features,
                         # do_sample=False,
                         # num_beams = 1,
                         temperature=0.0,
@@ -1182,6 +1204,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         images=[(images_crop.cuda(), images_ori.cuda())],
                         images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
                         images_spatial_crop = images_spatial_crop,
+                        images_features = image_features,
                         # do_sample=False,
                         # num_beams = 1,
                         temperature=0.0,

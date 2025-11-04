@@ -113,9 +113,13 @@ def center_crop_arr(pil_image, image_size):
 #                                  Training Loop                                #
 #################################################################################
 
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
-def main(args):
-    """Trains a new SiT model using config-driven hyperparameters."""
+
+@hydra.main(version_base=None, config_path="../configs/stage2/training/ImageNet256", config_name="custom")
+def main(cfg: DictConfig):
+    """Trains a new SiT model using Hydra configuration."""
     if not torch.cuda.is_available():
         raise RuntimeError("Training currently requires at least one GPU.")
     # st()
@@ -128,7 +132,7 @@ def main(args):
         guidance_config,
         misc_config,
         training_config,
-    ) = parse_configs(args.config)
+    ) = parse_configs(cfg)
 
     if rae_config is None or model_config is None:
         raise ValueError("Config must provide both stage_1 and stage_2 sections.")
@@ -162,11 +166,11 @@ def main(args):
     sample_every = int(training_cfg.get("sample_every", 10_000))
     cfg_scale_override = training_cfg.get("cfg_scale", None)
     default_seed = int(training_cfg.get("global_seed", 0))
-    global_seed = args.global_seed if args.global_seed is not None else default_seed
+    global_seed = cfg.global_seed if cfg.global_seed is not None else default_seed
 
     if grad_accum_steps < 1:
         raise ValueError("Gradient accumulation steps must be >= 1.")
-    if args.image_size % 16 != 0:
+    if cfg.image_size % 16 != 0:
         raise ValueError("Image size must be divisible by 16 for the RAE encoder.")
 
     dist.init_process_group("nccl")
@@ -185,7 +189,7 @@ def main(args):
         print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
 
     micro_batch_size = global_batch_size // (world_size * grad_accum_steps)
-    use_bf16 = args.precision == "bf16"
+    use_bf16 = cfg.precision == "bf16"
     if use_bf16 and not torch.cuda.is_bf16_supported():
         raise ValueError("Requested bf16 precision, but the current CUDA device does not support bfloat16.")
     autocast_kwargs = dict(dtype=torch.bfloat16, enabled=use_bf16)
@@ -215,25 +219,25 @@ def main(args):
     t_max = float(guidance_value("t_max", 1.0))
 
     if rank == 0:
-        os.makedirs(args.results_dir, exist_ok=True)
-        experiment_index = len(glob(f"{args.results_dir}/*")) - 1
+        os.makedirs(cfg.results_dir, exist_ok=True)
+        experiment_index = len(glob(f"{cfg.results_dir}/*")) - 1
         model_target = str(model_config.get("target", "stage2"))
         model_string_name = model_target.split(".")[-1]
-        precision_suffix = f"-{args.precision}" if args.precision == "bf16" else ""
+        precision_suffix = f"-{cfg.precision}" if cfg.precision == "bf16" else ""
         loss_weight_str = loss_weight if loss_weight is not None else "none"
         experiment_name = (
             f"{experiment_index:03d}-{model_string_name}-"
             f"{path_type}-{prediction}-{loss_weight_str}{precision_suffix}-acc{grad_accum_steps}"
         )
-        experiment_dir = os.path.join(args.results_dir, experiment_name)
+        experiment_dir = os.path.join(cfg.results_dir, experiment_name)
         checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
-        if args.wandb:
-            entity = os.environ["ENTITY"]
-            project = os.environ["PROJECT"]
-            wandb_utils.initialize(args, entity, experiment_name, project)
+        if cfg.wandb:
+            entity = "mprabhud"
+            project = "RAE"
+            wandb_utils.initialize(cfg, entity, experiment_name, project)
     else:
         experiment_dir = None
         checkpoint_dir = None
@@ -250,8 +254,8 @@ def main(args):
     sched_state = None
     train_steps = 0
 
-    if args.ckpt is not None:
-        checkpoint = torch.load(args.ckpt, map_location="cpu")
+    if cfg.ckpt is not None:
+        checkpoint = torch.load(cfg.ckpt, map_location="cpu")
         if "model" in checkpoint:
             model.load_state_dict(checkpoint["model"])
         if "ema" in checkpoint:
@@ -270,11 +274,11 @@ def main(args):
         opt.load_state_dict(opt_state)
 
     transform = transforms.Compose([
-        transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
+        transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
     ])
-    dataset = ImageFolder(args.data_path, transform=transform)
+    dataset = ImageFolder(cfg.data_path, transform=transform)
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,
@@ -291,12 +295,12 @@ def main(args):
         pin_memory=True,
         drop_last=True,
     )
-    logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
+    logger.info(f"Dataset contains {len(dataset):,} images ({cfg.data_path})")
     logger.info(
         f"Gradient accumulation: steps={grad_accum_steps}, micro batch={micro_batch_size}, "
         f"per-GPU batch={micro_batch_size * grad_accum_steps}, global batch={global_batch_size}"
     )
-    logger.info(f"Precision mode: {args.precision}")
+    logger.info(f"Precision mode: {cfg.precision}")
 
     loader_batches = len(loader)
     if loader_batches % grad_accum_steps != 0:
@@ -406,7 +410,7 @@ def main(args):
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
                 avg_loss = avg_loss.item() / world_size
                 logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
-                if args.wandb:
+                if cfg.wandb:
                     wandb_utils.log(
                         {"train loss": avg_loss, "train steps/sec": steps_per_sec},
                         step=train_steps,
@@ -423,13 +427,13 @@ def main(args):
                         "opt": opt.state_dict(),
                         "scheduler": schedl.state_dict(),
                         "train_steps": train_steps,
-                        "config_path": args.config,
+                        "config_path": cfg.config,
                         "training_cfg": training_cfg,
                         "cli_overrides": {
-                            "data_path": args.data_path,
-                            "results_dir": args.results_dir,
-                            "image_size": args.image_size,
-                            "precision": args.precision,
+                            "data_path": cfg.data_path,
+                            "results_dir": cfg.results_dir,
+                            "image_size": cfg.image_size,
+                            "precision": cfg.precision,
                             "global_seed": global_seed,
                         },
                     }
@@ -449,11 +453,11 @@ def main(args):
                         samples, _ = samples.chunk(2, dim=0)
                     samples = rae.decode(samples.to(torch.float32))
                     out_samples = torch.zeros(
-                        (global_batch_size // grad_accum_steps, 3, args.image_size, args.image_size),
+                        (global_batch_size // grad_accum_steps, 3, cfg.image_size, cfg.image_size),
                         device=device,
                     )
                     dist.all_gather_into_tensor(out_samples, samples)
-                    if args.wandb:
+                    if cfg.wandb:
                         wandb_utils.log_image(out_samples, train_steps)
                 logger.info("Generating EMA samples done.")
 
@@ -467,14 +471,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True, help="Path to the config file.")
-    parser.add_argument("--data-path", type=str, required=True, help="Path to the training dataset root.")
-    parser.add_argument("--results-dir", type=str, default="results", help="Directory to store training outputs.")
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256, help="Input image resolution.")
-    parser.add_argument("--precision", type=str, choices=["fp32", "bf16"], default="fp32", help="Compute precision for training.")
-    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging.")
-    parser.add_argument("--ckpt", type=str, default=None, help="Optional checkpoint path to resume training.")
-    parser.add_argument("--global-seed", type=int, default=None, help="Override training.global_seed from the config.")
-    args = parser.parse_args()
-    main(args)
+    main()

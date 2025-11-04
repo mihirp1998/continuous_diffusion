@@ -7,12 +7,33 @@ import os
 import argparse
 import hashlib
 import math
-
+from omegaconf import DictConfig, OmegaConf
+import ipdb
+st = ipdb.set_trace
 
 def is_main_process():
     return dist.get_rank() == 0
 
 def namespace_to_dict(namespace):
+    # Handle DictConfig from Hydra/OmegaConf - convert to plain dict first
+    if isinstance(namespace, DictConfig):
+        namespace = OmegaConf.to_container(namespace, resolve=True)
+    
+    # Handle regular dicts - recursively convert nested structures
+    if isinstance(namespace, dict):
+        result = {}
+        for k, v in namespace.items():
+            # Ensure keys are JSON-serializable (convert tuples to strings if needed)
+            if isinstance(k, tuple):
+                k = str(k)
+            # Recursively process nested dicts, Namespaces, and DictConfigs
+            if isinstance(v, (dict, DictConfig, argparse.Namespace)):
+                result[k] = namespace_to_dict(v)
+            else:
+                result[k] = v
+        return result
+    
+    # Handle argparse.Namespace
     return {
         k: namespace_to_dict(v) if isinstance(v, argparse.Namespace) else v
         for k, v in vars(namespace).items()
@@ -26,7 +47,7 @@ def generate_run_id(exp_name):
 
 def initialize(args, entity, exp_name, project_name):
     config_dict = namespace_to_dict(args)
-    wandb.login(key=os.environ["WANDB_KEY"])
+    wandb.login()
     wandb.init(
         entity=entity,
         project=project_name,
