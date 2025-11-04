@@ -10,3 +10,5 @@ diffusion-data-constraint/data
 */tokenizer.json
 *.png
 *.jpg
+RAE/outputs
+*.log
