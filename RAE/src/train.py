@@ -17,6 +17,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 import numpy as np
+import math
 from collections import OrderedDict
 from PIL import Image
 from copy import deepcopy
@@ -143,7 +144,7 @@ class TextDataset(Dataset):
         print("Converting dataset to list...")
         for i, story in enumerate(dataset):
             self.stories.append(story['text'])
-            if i >= 10000:  # Limit to first 10k stories for memory
+            if i >= 500000:  # Limit to first 10k stories for memory
                 break
         # create_text_image(self.stories[0])
         # st()
@@ -478,13 +479,25 @@ def main(cfg: DictConfig):
         accum_counter = 0
         step_loss_accum = 0.0
         for x, y in loader:
-            st()
             x = x.to(device)
-            # y = y.to(device)
             
             with torch.no_grad():
-                x = rae.encode(x)
-            model_kwargs = dict()
+                if rae_config.target == "ocr":
+                    x = rae.get_image_features(x)
+                    
+                    bs, num_tokens, dim = x.shape
+                    x = x.permute(0, 2, 1)
+                    h = w = int(math.sqrt(num_tokens))
+                    x = x.view(bs, dim, h, w)
+                    
+                    y = None
+                else:
+                    y = y.to(device)
+                    x = rae.encode(x)
+                    # ipdb> print(x.shape)
+                    # torch.Size([48, 768, 16, 16])                    
+            # st()
+            model_kwargs = dict(y=y)
             with autocast(**autocast_kwargs):
                 loss_tensor = transport.training_losses(model, x, model_kwargs)["loss"].mean()
             step_loss_accum += loss_tensor.item()
@@ -506,6 +519,7 @@ def main(cfg: DictConfig):
             train_steps += 1
             accum_counter = 0
             step_loss_accum = 0.0
+            # st()
 
             if train_steps % log_every == 0:
                 torch.cuda.synchronize()
@@ -532,7 +546,7 @@ def main(cfg: DictConfig):
                         "opt": opt.state_dict(),
                         "scheduler": schedl.state_dict(),
                         "train_steps": train_steps,
-                        "config_path": cfg.config,
+                        "config_path": cfg,
                         "training_cfg": training_cfg,
                         "cli_overrides": {
                             "data_path": cfg.data_path,
@@ -542,12 +556,13 @@ def main(cfg: DictConfig):
                             "global_seed": global_seed,
                         },
                     }
+                    # st()
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
                 dist.barrier()
 
-            if train_steps % sample_every == 0 or train_steps == 1:
+            if sample_every != -1 and (train_steps % sample_every == 0 or train_steps == 1):
                 logger.info("Generating EMA samples...")
                 with torch.no_grad():
                     with autocast(**autocast_kwargs):

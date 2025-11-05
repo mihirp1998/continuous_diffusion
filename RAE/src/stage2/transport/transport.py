@@ -1,5 +1,7 @@
 import torch as th
 import numpy as np
+import ipdb
+st = ipdb.set_trace
 import logging
 
 import enum
@@ -192,6 +194,7 @@ class Transport:
         - x1: datapoint
         - model_kwargs: additional arguments for the model
         """
+        # st()
         if model_kwargs == None:
             model_kwargs = {}
         

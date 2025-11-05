@@ -342,6 +342,33 @@ class BasicImageTransform(BaseTransform):
         x = self.transform(x)
         return x
 
+
+
+class BasicImageTransform_Tensor(BaseTransform):
+    def __init__(
+        self, 
+        mean: Optional[Tuple[float, float, float]] = (0.5, 0.5, 0.5),
+        std: Optional[Tuple[float, float, float]] = (0.5, 0.5, 0.5),
+        normalize: bool = True
+    ):
+        self.mean = mean
+        self.std = std
+    
+        transform_pipelines = [
+            # transforms.ToTensor()
+        ]
+
+        normalize = normalize_transform(mean, std) if normalize else nn.Identity()
+        if normalize is not None:
+            transform_pipelines.append(normalize)
+
+        self.transform = transforms.Compose(transform_pipelines)
+    
+    def __call__(self, x):
+        x = self.transform(x)
+        return x
+
+
 class NoEOSTextStreamer(TextStreamer):
     def on_finalized_text(self, text: str, stream_end: bool = False):
 
@@ -387,28 +414,49 @@ class DeepseekOCRModel(DeepseekV2Model):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         
-        # st()
+        
         if inputs_embeds is None and not return_image_features:
             # inputs_embeds = self.embed_tokens(input_ids)
             inputs_embeds = self.get_input_embeddings()(input_ids)
 
-
+        
 
         sam_model = getattr(self, 'sam_model', None)
         # sam_model = self.sam_model
         vision_model = getattr(self, 'vision_model', None)
-        # st()
+        
+        if return_image_features:
+            image_ori = images[0][1]
+            global_features_1 = sam_model(image_ori)
+            global_features_2 = vision_model(image_ori, global_features_1) 
+            global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
+            global_features = self.projector(global_features)            
+            return global_features
 
 
 
         if (sam_model is not None and (input_ids.shape[1] != 1 or self.training) and (torch.sum(images[0][1]).item() != 0 or images_features is not None)) :
 
             idx = 0
-            
+            # st()
             if images_features is not None:
                 all_image_features = images_features
+                all_global_local_features = []
                 for image_feature in all_image_features:
-                    inputs_embeds[idx].masked_scatter_(images_seq_mask[idx].unsqueeze(-1).cuda(), image_feature)
+                    
+                    _, hw, n_dim = image_feature.shape
+                    h = w = int(hw ** 0.5)
+                    image_feature = image_feature.view(h, w, n_dim)
+
+                    image_feature = torch.cat(
+                        [image_feature, self.image_newline[None, None, :].expand(h, 1, n_dim)], dim=1
+                    )
+                    
+                    image_feature = image_feature.view(-1, n_dim)
+
+                    global_local_features = torch.cat([image_feature, self.view_seperator[None, :]], dim=0)  
+                    all_global_local_features.append(global_local_features)
+                    inputs_embeds[idx].masked_scatter_(images_seq_mask[idx].unsqueeze(-1).cuda(), global_local_features)                  
                     idx += 1
             else:
                 # sam_model = torch.jit.script(sam_model)
@@ -716,257 +764,25 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         setattr(torch.nn.Linear, "reset_parameters", lambda self: None)
         setattr(torch.nn.LayerNorm, "reset_parameters", lambda self: None)
 
-    def get_image_features(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False, return_image_features=False):
+    def get_image_features(self,  image_tensor):
         self.disable_torch_init()
-
-        os.makedirs(output_path, exist_ok=True)
-        os.makedirs(f'{output_path}/images', exist_ok=True)
-
-        if prompt and image_file:
-            conversation = [
-                {
-                    "role": "<|User|>",
-                    # "content": "<image>\n<|grounding|>Given the layout of the image. ",
-                    "content": f'{prompt}',
-                    # "content": "君不见黄河之水天上来的下一句是什么？",
-                    # "content": "<image>\nFree OCR. ",
-                    # "content": "<image>\nParse the figure. ",
-                    # "content": "<image>\nExtract the text in the image. ",
-                    "images": [f'{image_file}'],
-                },
-                {"role": "<|Assistant|>", "content": ""},
-            ]
+        image_transform = BasicImageTransform_Tensor(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True)
+        image_tensor = image_transform(image_tensor).to(torch.bfloat16)
+        global_features_1 = self.model.sam_model(image_tensor)
+        global_features_2 = self.model.vision_model(image_tensor, global_features_1) 
+        global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
+        global_features = self.model.projector(global_features)        
+        return global_features
         
-        elif prompt:
-            conversation = [
-                {
-                    "role": "<|User|>",
-                    # "content": "<image>\n<|grounding|>Given the layout of the image. ",
-                    "content": f'{prompt}',
-                    # "content": "君不见黄河之水天上来的下一句是什么？",
-                    # "content": "<image>\nFree OCR. ",
-                    # "content": "<image>\nParse the figure. ",
-                    # "content": "<image>\nExtract the text in the image. ",
-                    # "images": [f'{image_file}'],
-                },
-                {"role": "<|Assistant|>", "content": ""},
-            ]
-        else:
-            assert False, f'prompt is none!'
-        
-        prompt = format_messages(conversations=conversation, sft_format='plain', system_prompt='')
-
-        patch_size = 16
-        downsample_ratio = 4
-        images = load_pil_images(conversation)
-
-        valid_img_tokens = 0
-        ratio = 1
-
-        image_draw = images[0].copy()
-
-        w,h = image_draw.size
-        # print(w, h)
-        ratio = 1 - ((max(w, h) - min(w, h)) / (max(w, h)))
-    
-
-        image_transform=BasicImageTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True)
-        images_seq_mask = []
-
-        image_token = '<image>'
-        image_token_id = 128815
-        text_splits = prompt.split(image_token)
-
-        images_list, images_crop_list, images_seq_mask = [], [], []
-        tokenized_str = []
-        images_spatial_crop = []
-        for text_sep, image in zip(text_splits, images):
-
-            tokenized_sep = text_encode(tokenizer, text_sep, bos=False, eos=False)
-            tokenized_str += tokenized_sep
-            images_seq_mask += [False] * len(tokenized_sep)
-
-            if crop_mode:
-
-                if image.size[0] <= 640 and image.size[1] <= 640:
-                    crop_ratio = [1, 1]
-
-                else:
-                    if crop_mode:
-                        # best_width, best_height = select_best_resolution(image.size, self.candidate_resolutions)
-                        images_crop_raw, crop_ratio = dynamic_preprocess(image)
-                    else:
-                        # best_width, best_height = self.image_size, self.image_size
-                        crop_ratio = [1, 1]
-                
-                """process the global view"""
-                # image = image.resize((base_size, base_size))
-                global_view = ImageOps.pad(image, (base_size, base_size),
-                                        color=tuple(int(x * 255) for x in image_transform.mean))
-                
-                if base_size == 1024:
-                    valid_img_tokens += int(256 * ratio)
-                elif base_size == 1280:
-                    valid_img_tokens += int(400 * ratio)
-                # elif base_size == 640:
-                #     valid_img_tokens += int(100 * ratio)
-                
-
-
-
-                
-                images_list.append(image_transform(global_view).to(torch.bfloat16))
-
-                # global_view_tensor = image_transform(global_view).to(torch.bfloat16)
-
-                width_crop_num, height_crop_num = crop_ratio
-
-                images_spatial_crop.append([width_crop_num, height_crop_num])
-                
-                
-                if width_crop_num > 1 or height_crop_num > 1:
-                    """process the local views"""
-                    
-                    for i in range(len(images_crop_raw)):
-                        images_crop_list.append(image_transform(images_crop_raw[i]).to(torch.bfloat16))
-                
-                if image_size == 640:
-                    valid_img_tokens += len(images_crop_list) * 100
-
-                num_queries = math.ceil((image_size // patch_size) / downsample_ratio)
-                num_queries_base = math.ceil((base_size // patch_size) / downsample_ratio)
-
-
-
-                """add image tokens"""
-
-                
-
-                tokenized_image = ([image_token_id] * num_queries_base + [image_token_id]) * num_queries_base
-                tokenized_image += [image_token_id]
-                if width_crop_num > 1 or height_crop_num > 1:
-                    tokenized_image += ([image_token_id] * (num_queries * width_crop_num) + [image_token_id]) * (
-                                num_queries * height_crop_num)
-                tokenized_str += tokenized_image
-                images_seq_mask += [True] * len(tokenized_image)
-                # num_image_tokens.append(len(tokenized_image))
-
-            else:
-                # best_width, best_height = self.image_size, self.image_size
-                # print(image.size, (best_width, best_height)) # check the select_best_resolutions func
-
-                """process the global view"""
-                if image_size <= 640:
-                    print('directly resize')
-                    image = image.resize((image_size, image_size))
-                # else:
-                global_view = ImageOps.pad(image, (image_size, image_size),
-                                        color=tuple(int(x * 255) for x in image_transform.mean))
-                images_list.append(image_transform(global_view).to(torch.bfloat16))
-
-                if base_size == 1024:
-                    valid_img_tokens += int(256 * ratio)
-                elif base_size == 1280:
-                    valid_img_tokens += int(400 * ratio)
-                elif base_size == 640:
-                    valid_img_tokens += int(100 * 1)
-                elif base_size == 512:
-                    valid_img_tokens += int(64 * 1)
-
-                width_crop_num, height_crop_num = 1, 1
-
-                images_spatial_crop.append([width_crop_num, height_crop_num])
-
-
-                """add image tokens"""
-                num_queries = math.ceil((image_size // patch_size) / downsample_ratio)
-
-                tokenized_image = ([image_token_id] * num_queries + [image_token_id]) * num_queries
-                tokenized_image += [image_token_id]
-                # tokenized_image += ([self.image_token_id] * (num_queries * width_crop_num) + [self.image_token_id]) * (
-                #             num_queries * height_crop_num)
-                tokenized_str += tokenized_image
-                images_seq_mask += [True] * len(tokenized_image)
-                # num_image_tokens.append(len(tokenized_image))
-            # st()
-
-        """process the last text split"""
-        tokenized_sep = text_encode(tokenizer, text_splits[-1], bos=False, eos=False)
-        tokenized_str += tokenized_sep
-        images_seq_mask += [False] * len(tokenized_sep)
-
-        """add the bos tokens"""
-        bos_id = 0
-        tokenized_str = [bos_id] + tokenized_str 
-        images_seq_mask = [False] + images_seq_mask
-
-
-
-        input_ids = torch.LongTensor(tokenized_str)
-
-
-        
-
-        images_seq_mask = torch.tensor(images_seq_mask, dtype=torch.bool)
-
-
-        if len(images_list) == 0:
-            images_ori = torch.zeros((1, 3, image_size, image_size))
-            images_spatial_crop = torch.zeros((1, 2), dtype=torch.long)
-            images_crop = torch.zeros((1, 3, base_size, base_size))
-
-        else:
-            images_ori = torch.stack(images_list, dim=0)
-            images_spatial_crop = torch.tensor(images_spatial_crop, dtype=torch.long)
-            if images_crop_list:
-                images_crop = torch.stack(images_crop_list, dim=0)
-            else:
-                images_crop = torch.zeros((1, 3, base_size, base_size))
-
-
-
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            # st()
-            with torch.no_grad():
-                return self.model(
-                    input_ids=input_ids.unsqueeze(0).cuda(),
-                    images=[(images_crop.cuda(), images_ori.cuda())],
-                    images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
-                    images_spatial_crop = images_spatial_crop,
-                    # do_sample=False,
-                    # num_beams = 1,
-                    # temperature=0.0,
-                    # eos_token_id=tokenizer.eos_token_id,
-                    # max_new_tokens=8192,
-                    # no_repeat_ngram_size = 35,
-                    use_cache = True,
-                    return_image_features = return_image_features                    
-                )
-                # output_ids = self.generate(
-                #     input_ids.unsqueeze(0).cuda(),
-                #     images=[(images_crop.cuda(), images_ori.cuda())],
-                #     images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
-                #     images_spatial_crop = images_spatial_crop,
-                #     # do_sample=False,
-                #     # num_beams = 1,
-                #     temperature=0.0,
-                #     eos_token_id=tokenizer.eos_token_id,
-                #     max_new_tokens=8192,
-                #     no_repeat_ngram_size = 35,
-                #     use_cache = True,
-                #     # return_image_features = True
-                #     )
-
-
 
 
 
     def infer(self, tokenizer, image_features=None, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False):
         self.disable_torch_init()
         print("new ")
-
-        os.makedirs(output_path, exist_ok=True)
-        os.makedirs(f'{output_path}/images', exist_ok=True)
+        if output_path != '':
+            os.makedirs(output_path, exist_ok=True)
+            os.makedirs(f'{output_path}/images', exist_ok=True)
 
         if prompt and image_file:
             conversation = [
@@ -1021,7 +837,6 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         else:
             images = [None] * len(image_features)
             
-        # st()
         images_seq_mask = []
         text_splits = prompt.split(image_token)
 

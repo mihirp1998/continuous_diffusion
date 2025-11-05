@@ -2,3 +2,13 @@
 
 stage_1:
   target: ocr
+
+
+training:
+  sample_every: -1
+
+stage_2:
+  params:
+    input_size: 8
+    in_channels: 1280    
+    y_embedder: false

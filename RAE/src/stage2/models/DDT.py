@@ -3,7 +3,8 @@ from re import L
 from regex import B
 import torch
 import torch.nn as nn
-
+import ipdb
+st = ipdb.set_trace
 from transformers import SwinModel
 import torch
 from torch import nn
@@ -198,6 +199,7 @@ class DiTwDDTHead(nn.Module):
             use_rmsnorm=True,
             wo_shift=False,
             use_pos_embed: bool = True,
+            y_embedder: bool = True,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -234,8 +236,11 @@ class DiTwDDTHead(nn.Module):
         self.s_projector = nn.Linear(
             self.encoder_hidden_size, self.decoder_hidden_size) if self.encoder_hidden_size != self.decoder_hidden_size else nn.Identity()
         self.t_embedder = GaussianFourierEmbedding(self.encoder_hidden_size)
-        self.y_embedder = LabelEmbedder(
-            num_classes, self.encoder_hidden_size, class_dropout_prob)
+        if y_embedder:
+            self.y_embedder = LabelEmbedder(
+                num_classes, self.encoder_hidden_size, class_dropout_prob)
+        else:
+            self.y_embedder = None
         # print(f"x_channel_per_token: {x_channel_per_token}, s_channel_per_token: {s_channel_per_token}")
         self.final_layer = DDTFinalLayer(
             self.decoder_hidden_size, 1, x_channel_per_token, use_rmsnorm=use_rmsnorm)
@@ -297,7 +302,8 @@ class DiTwDDTHead(nn.Module):
         nn.init.constant_(self.s_embedder.proj.bias, 0)
 
         # Initialize label embedding table:
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+        if self.y_embedder is not None:
+            nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
         if self.use_pos_embed:
             # Initialize (and freeze) pos_embed by sin-cos embedding:
             pos_embed = get_2d_sincos_pos_embed(
@@ -338,9 +344,14 @@ class DiTwDDTHead(nn.Module):
 
     def forward(self, x, t, y, s=None, mask=None):
         # x = self.x_embedder(x) + self.pos_embed
+        # st()
+
         t = self.t_embedder(t)
-        y = self.y_embedder(y, self.training)
-        c = nn.functional.silu(t + y)
+        if y is not None:
+            y = self.y_embedder(y, self.training)
+            c = nn.functional.silu(t + y)
+        else:
+            c = nn.functional.silu(t)
         if s is None:
             s = self.s_embedder(x)
             if self.use_pos_embed:

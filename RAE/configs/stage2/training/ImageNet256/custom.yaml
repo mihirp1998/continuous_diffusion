@@ -35,7 +35,7 @@ stage_2:
     use_rmsnorm: true
     wo_shift: false
     use_pos_embed: true
-
+    y_embedder: true
 transport:
   params:
     path_type: 'Linear'

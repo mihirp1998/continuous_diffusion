@@ -1,4 +1,4 @@
-# from transformers import Dinov2WithRegistersModel
+# 
 from torch import nn
 import torch
 from math import *
@@ -13,6 +13,7 @@ class Dinov2withNorm(nn.Module):
         normalize: bool = True,
     ):
         super().__init__()
+        from transformers import Dinov2WithRegistersModel
         # Support both local paths and HuggingFace model IDs
         try:
             self.encoder = Dinov2WithRegistersModel.from_pretrained(dinov2_path, local_files_only=True)
