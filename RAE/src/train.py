@@ -556,7 +556,7 @@ def main(cfg: DictConfig):
                 logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
                 if cfg.wandb:
                     wandb_utils.log(
-                        {"train loss": avg_loss, "train steps/sec": steps_per_sec, "epoch": epoch},
+                        {"train loss": avg_loss, "train steps/sec": steps_per_sec, "epoch": epoch, "train steps": train_steps},
                         step=train_steps,
                     )
                 running_loss = 0.0
