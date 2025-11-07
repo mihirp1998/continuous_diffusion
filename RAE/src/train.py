@@ -607,9 +607,11 @@ def main(cfg: DictConfig):
                         print(f"input sample: {input_text}")
                         mse_difference = torch.nn.functional.mse_loss(input_sample[0], samples[0])
                         print(f"mse difference: {mse_difference}")
-                        wandb.log({
-                            "mse difference": mse_difference
-                        })
+                        if cfg.wandb:
+                            wandb_utils.log(    
+                                {"mse difference": mse_difference},
+                                step=train_steps,
+                            )
                         
                         for sample in samples:
                             res_text =  rae.infer(deepseek_tokenizer,image_features=[sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
