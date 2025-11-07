@@ -3,3 +3,6 @@
 
 global_seed: 2
 dataset: tiny
+
+guidance:
+  scale: 0.0

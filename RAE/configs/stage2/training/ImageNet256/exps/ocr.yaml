@@ -3,9 +3,13 @@
 stage_1:
   target: ocr
 
+misc:
+  latent_size: [1280, 8, 8] # [C, H, W]
+
 
 training:
   sample_every: -1
+  gen_global_batch_size: 16
 
 stage_2:
   params:

@@ -10,6 +10,7 @@ import cv2
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+from transformers import AutoTokenizer
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
@@ -28,7 +29,7 @@ import ipdb
 st = ipdb.set_trace
 import logging
 import warnings
-
+import wandb
 import math
 from torch.cuda.amp import autocast
 from omegaconf import OmegaConf
@@ -131,22 +132,27 @@ class TextDataset(Dataset):
                              If False, treats root as a flat directory with all images.
     """
     
-    def __init__(self, root, transform=None, class_subdirs=True):
+    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000):
         self.root = root
         self.transform = transform
+        # st()
         
         # Load TinyStories dataset
         print("Loading TinyStories dataset...")
         dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
-        
+        # st()
         # Convert dataset to list to get length and indexing
         self.stories = []
         print("Converting dataset to list...")
         for i, story in enumerate(dataset):
+            if i >= num_stories:  # Limit to first 10k stories for memory
+                break            
             self.stories.append(story['text'])
-            if i >= 500000:  # Limit to first 10k stories for memory
-                break
+
         # create_text_image(self.stories[0])
+        # st()
+        if len(self.stories) < 8:
+            self.stories = self.stories * 1024
         # st()
         print(f"Loaded {len(self.stories)} stories")
 
@@ -251,6 +257,7 @@ def main(cfg: DictConfig):
     ema_decay = float(training_cfg.get("ema_decay", 0.9995))
     epochs = int(training_cfg.get("epochs", 1400))
     global_batch_size = int(training_cfg.get("global_batch_size", 1024))
+    gen_global_batch_size = int(training_cfg.get("gen_global_batch_size", 1024))
     num_workers = int(training_cfg.get("num_workers", 4))
     log_every = int(training_cfg.get("log_every", 100))
     ckpt_every = int(training_cfg.get("ckpt_every", 5_000))
@@ -278,8 +285,10 @@ def main(cfg: DictConfig):
     torch.cuda.manual_seed(seed)
     if rank == 0:
         print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
-
+    assert gen_global_batch_size >= world_size, "gen_global_batch_size must be greater than world_size"
+    assert global_batch_size > world_size*grad_accum_steps, "global_batch_size must be greater than world_size*grad_accum_steps"
     micro_batch_size = global_batch_size // (world_size * grad_accum_steps)
+    gen_micro_batch_size = gen_global_batch_size // (world_size)
     use_bf16 = cfg.precision == "bf16"
     if use_bf16 and not torch.cuda.is_bf16_supported():
         raise ValueError("Requested bf16 precision, but the current CUDA device does not support bfloat16.")
@@ -291,6 +300,8 @@ def main(cfg: DictConfig):
     prediction = transport_params.get("prediction", "velocity")
     loss_weight = transport_params.get("loss_weight")
     transport_params.pop("time_dist_shift", None)
+    
+    vis_dict = []
 
     sampler_mode = sampler_cfg.get("mode", "ODE").upper()
     sampler_params = dict(sampler_cfg.get("params", {}))
@@ -310,25 +321,30 @@ def main(cfg: DictConfig):
     t_max = float(guidance_value("t_max", 1.0))
 
     if rank == 0:
+        if cfg.wandb:
+            entity = "mprabhud"
+            project = "pixel-llm"
+            wandb_utils.initialize(cfg, entity, None, project)        
         os.makedirs(cfg.results_dir, exist_ok=True)
-        experiment_index = len(glob(f"{cfg.results_dir}/*")) - 1
-        model_target = str(model_config.get("target", "stage2"))
-        model_string_name = model_target.split(".")[-1]
-        precision_suffix = f"-{cfg.precision}" if cfg.precision == "bf16" else ""
-        loss_weight_str = loss_weight if loss_weight is not None else "none"
-        experiment_name = (
-            f"{experiment_index:03d}-{model_string_name}-"
-            f"{path_type}-{prediction}-{loss_weight_str}{precision_suffix}-acc{grad_accum_steps}"
-        )
+        if cfg.wandb:
+            experiment_name = wandb.run.name
+        else:
+            experiment_index = len(glob(f"{cfg.results_dir}/*")) - 1
+            model_target = str(model_config.get("target", "stage2"))
+            model_string_name = model_target.split(".")[-1]
+            precision_suffix = f"-{cfg.precision}" if cfg.precision == "bf16" else ""
+            loss_weight_str = loss_weight if loss_weight is not None else "none"
+            experiment_name = (
+                f"{experiment_index:03d}-{model_string_name}-"
+                f"{path_type}-{prediction}-{loss_weight_str}{precision_suffix}-acc{grad_accum_steps}"
+            )
+        
         experiment_dir = os.path.join(cfg.results_dir, experiment_name)
         checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
-        if cfg.wandb:
-            entity = "mprabhud"
-            project = "RAE"
-            wandb_utils.initialize(cfg, entity, experiment_name, project)
+
     else:
         experiment_dir = None
         checkpoint_dir = None
@@ -380,7 +396,7 @@ def main(cfg: DictConfig):
             # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
         ])        
-        dataset = TextDataset(cfg.data_path, transform=transform)
+        dataset = TextDataset(cfg.data_path, transform=transform, num_stories=cfg.training.num_examples)
     
     # st()
     sampler = DistributedSampler(
@@ -446,10 +462,14 @@ def main(cfg: DictConfig):
     running_loss = 0.0
     start_time = time()
 
-    ys = torch.randint(num_classes, size=(micro_batch_size,), device=device)
+    ys = torch.randint(num_classes, size=(gen_micro_batch_size,), device=device)
     using_cfg = guidance_scale > 1.0
     n = ys.size(0)
     zs = torch.randn(n, *latent_size, device=device, dtype=latent_dtype)
+    
+    if rae_config.target == "ocr":
+        ys = None
+        deepseek_tokenizer = AutoTokenizer.from_pretrained("../DeepSeek-OCR-code", trust_remote_code=True)
 
     if using_cfg:
         zs = torch.cat([zs, zs], dim=0)
@@ -469,7 +489,12 @@ def main(cfg: DictConfig):
             model_fn = ema.forward_with_cfg
     else:
         sample_model_kwargs = dict(y=ys)
-        model_fn = ema.forward
+        
+        if cfg.use_model_forward:
+            model_fn = model.forward
+        else:
+            model_fn = ema.forward
+        # st()
 
     logger.info(f"Training for {epochs} epochs...")
     for epoch in range(epochs):
@@ -571,14 +596,56 @@ def main(cfg: DictConfig):
 
                     if using_cfg:
                         samples, _ = samples.chunk(2, dim=0)
-                    samples = rae.decode(samples.to(torch.float32))
-                    out_samples = torch.zeros(
-                        (global_batch_size // grad_accum_steps, 3, cfg.image_size, cfg.image_size),
-                        device=device,
-                    )
-                    dist.all_gather_into_tensor(out_samples, samples)
-                    if cfg.wandb:
-                        wandb_utils.log_image(out_samples, train_steps)
+                    # st()
+                    if rae_config.target == "ocr":
+                        prompt = "<image>\n<|grounding|>Convert the document to markdown. "
+                        decoded_text = []
+                        
+                        samples = samples.flatten(2).permute(0, 2, 1)
+                        input_sample = x.flatten(2).permute(0, 2, 1)
+                        input_text =  rae.infer(deepseek_tokenizer,image_features=[input_sample[0].unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+                        print(f"input sample: {input_text}")
+                        mse_difference = torch.nn.functional.mse_loss(input_sample[0], samples[0])
+                        print(f"mse difference: {mse_difference}")
+                        wandb.log({
+                            "mse difference": mse_difference
+                        })
+                        
+                        for sample in samples:
+                            res_text =  rae.infer(deepseek_tokenizer,image_features=[sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+                            decoded_text.append(res_text)
+                        # Gather text from all processes
+                        gathered_text = [None] * world_size
+                        dist.all_gather_object(gathered_text, decoded_text)
+                        samples = [text for process_texts in gathered_text for text in process_texts]
+                        single_sample = samples[0]
+                        print(f"generated sample: {single_sample}")
+
+                        if cfg.wandb:
+                            # Update persistent vis_table_dict with new samples
+                            for i, text in enumerate(samples):
+                                sample_id = f"sample_{i}"
+                                vis_dict.append({
+                                    "train_step": train_steps,
+                                    "sample_id": sample_id,
+                                    "text": text
+                                })
+                            
+                            # Create wandb table from vis_table_dict
+                            table = wandb.Table(columns=["train_step", "sample_id", "text"])
+                            for entry in vis_dict:
+                                table.add_data(entry["train_step"], entry["sample_id"], entry["text"])
+                            
+                            wandb_utils.log_table(table, train_steps)
+                    else:
+                        samples = rae.decode(samples.to(torch.float32))
+                        out_samples = torch.zeros(
+                            (global_batch_size // grad_accum_steps, 3, cfg.image_size, cfg.image_size),
+                            device=device,
+                        )
+                        dist.all_gather_into_tensor(out_samples, samples)
+                        if cfg.wandb:
+                            wandb_utils.log_image(out_samples, train_steps)
                 logger.info("Generating EMA samples done.")
 
         if accum_counter != 0:

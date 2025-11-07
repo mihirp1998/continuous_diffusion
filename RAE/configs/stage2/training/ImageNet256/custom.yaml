@@ -66,6 +66,8 @@ misc:
 
 training:
   global_seed: 0
+  gen_global_batch_size: 1024
+  num_examples: 500000
   epochs: 1400
   global_batch_size: 1024
   grad_accum_steps: 1 # change according to your GPU memory
@@ -91,3 +93,4 @@ global_seed: null
 ckpt: null
 wandb: true
 dataset: imagenet
+use_model_forward: false

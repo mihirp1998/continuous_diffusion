@@ -51,9 +51,9 @@ def initialize(args, entity, exp_name, project_name):
     wandb.init(
         entity=entity,
         project=project_name,
-        name=exp_name,
+        # name=exp_name,
         config=config_dict,
-        id=generate_run_id(exp_name),
+        # id=generate_run_id(exp_name),
         resume="allow",
     )
 
@@ -67,6 +67,11 @@ def log_image(sample, step=None):
     if is_main_process():
         sample = array2grid(sample)
         wandb.log({f"samples": wandb.Image(sample), "train_step": step})
+
+
+def log_table(table, step=None):
+    if is_main_process():
+        wandb.log({"text_samples_table": table}, step=step)
 
 
 def array2grid(x):
