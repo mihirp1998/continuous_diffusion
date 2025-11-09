@@ -8,7 +8,7 @@ misc:
 
 
 training:
-  sample_every: 2500
+  sample_every: 10000
   gen_global_batch_size: 16
 
 stage_2:

@@ -69,7 +69,7 @@ training:
   num_workers: 4
   log_every: 100
   ckpt_every: 5000
-  sample_every: 10000
+  sample_every: 1000
   base_lr: 0.0002
   final_lr: 0.00002
   beta: [0.9, 0.95]

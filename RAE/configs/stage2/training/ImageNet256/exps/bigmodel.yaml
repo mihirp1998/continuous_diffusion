@@ -1,0 +1,7 @@
+# @package _global_
+
+stage_2:
+  params:
+    hidden_size: [1152, 2048]
+    depth: [28, 2]
+    num_heads: [16, 16]
