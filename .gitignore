@@ -12,3 +12,11 @@ diffusion-data-constraint/data
 *.jpg
 RAE/outputs
 *.log
+*/fused_kernels/*
+output/*
+diffusion-data-constraint/megatron/fused_kernels/
+diffusion-data-constraint/output/*
+diffusion-data-constraint/megatron/fused_kernels/build_NVIDIA\ L40S/.ninja_deps
+diffusion-data-constraint/megatron/fused_kernels/*
+wandb/
+tinystories-gpt2/

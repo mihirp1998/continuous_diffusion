@@ -6,7 +6,19 @@ from transformers import AutoConfig, AutoImageProcessor
 from typing import Optional
 from math import sqrt
 from typing import Protocol
+import ipdb
+st = ipdb.set_trace
+# tensor([[[[0.4850]],
 
+#          [[0.4560]],
+
+#          [[0.4060]]]])
+# ipdb> self.encoder_std
+# tensor([[[[0.2290]],
+
+#          [[0.2240]],
+
+#          [[0.2250]]]])
 class Stage1Protocal(Protocol):
     # must have patch size attribute
     patch_size: int
@@ -33,19 +45,33 @@ class RAE(nn.Module):
     ):
         super().__init__()
         encoder_cls = ARCHS[encoder_cls]
+        
         self.encoder: Stage1Protocal = encoder_cls(**encoder_params)
-        print(f"encoder_config_path: {encoder_config_path}")
-        proc = AutoImageProcessor.from_pretrained(encoder_config_path)
-        self.encoder_mean = torch.tensor(proc.image_mean).view(1, 3, 1, 1)
-        self.encoder_std = torch.tensor(proc.image_std).view(1, 3, 1, 1)
-        encoder_config = AutoConfig.from_pretrained(encoder_config_path)
+        # st()
+        self.deepseek_ocr = False
+        if "DeepSeek-OCR" in encoder_config_path:
+            self.deepseek_ocr = True
+            self.encoder_mean = None
+            self.encoder_std = None
+            self.decoder_mean = torch.tensor([0.9339, 0.9339, 0.9339]).view(1, 3, 1, 1)
+            self.decoder_std = torch.tensor([0.1997, 0.1997, 0.1997]).view(1, 3, 1, 1)
+        else:
+            print(f"encoder_config_path: {encoder_config_path}")
+            proc = AutoImageProcessor.from_pretrained(encoder_config_path)
+            self.encoder_mean = torch.tensor(proc.image_mean).view(1, 3, 1, 1)
+            self.encoder_std = torch.tensor(proc.image_std).view(1, 3, 1, 1)
+            self.decoder_mean = self.encoder_mean
+            self.decoder_std = self.encoder_std
+            encoder_config = AutoConfig.from_pretrained(encoder_config_path)
         # see if the encoder has patch size attribute            
+        # st()
         self.encoder_input_size = encoder_input_size
         self.encoder_patch_size = self.encoder.patch_size
         self.latent_dim = self.encoder.hidden_size
         assert self.encoder_input_size % self.encoder_patch_size == 0, f"encoder_input_size {self.encoder_input_size} must be divisible by encoder_patch_size {self.encoder_patch_size}"
         self.base_patches = (self.encoder_input_size // self.encoder_patch_size) ** 2 # number of patches of the latent
         
+        # st()
         # decoder
         decoder_config = AutoConfig.from_pretrained(decoder_config_path)
         decoder_config.hidden_size = self.latent_dim # set the hidden size of the decoder to be the same as the encoder's output
@@ -80,8 +106,14 @@ class RAE(nn.Module):
         _, _, h, w = x.shape
         if h != self.encoder_input_size or w != self.encoder_input_size:
             x = nn.functional.interpolate(x, size=(self.encoder_input_size, self.encoder_input_size), mode='bicubic', align_corners=False)
-        x = (x - self.encoder_mean.to(x.device)) / self.encoder_std.to(x.device)
+        # st()
+        if self.encoder_mean is not None and self.encoder_std is not None:
+            # making it to be 0 mean and 1 std before passing to the encoder
+            x = (x - self.encoder_mean.to(x.device)) / self.encoder_std.to(x.device)
+        
         z = self.encoder(x)
+        # st()
+        # z for imagenet is 0 mean and 1 std
         if self.training and self.noise_tau > 0:
             z = self.noising(z)
         if self.reshape_to_2d:
@@ -99,13 +131,15 @@ class RAE(nn.Module):
             latent_mean = self.latent_mean.to(z.device) if self.latent_mean is not None else 0
             latent_var = self.latent_var.to(z.device) if self.latent_var is not None else 1
             z = z * torch.sqrt(latent_var + self.eps) + latent_mean
+        # st()
         if self.reshape_to_2d:
             b, c, h, w = z.shape
             n = h * w
             z = z.view(b, c, n).transpose(1, 2)
         output = self.decoder(z, drop_cls_token=False).logits
         x_rec = self.decoder.unpatchify(output)
-        x_rec = x_rec * self.encoder_std.to(x_rec.device) + self.encoder_mean.to(x_rec.device)
+        if self.decoder_mean is not None and self.decoder_std is not None:
+            x_rec = x_rec * self.decoder_std.to(x_rec.device) + self.decoder_mean.to(x_rec.device)
         return x_rec
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

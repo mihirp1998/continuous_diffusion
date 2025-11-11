@@ -8,7 +8,9 @@ targeting the RAE autoencoder architecture used in this repository.
 """
 
 from __future__ import annotations
-
+import ipdb
+st = ipdb.set_trace
+import wandb
 import argparse
 import logging
 import math
@@ -17,7 +19,7 @@ from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Optional, Tuple
-
+from utils.basic_utils import create_text_image, TextDataset
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -58,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt", type=str, default=None, help="Optional checkpoint path to resume training.")
     parser.add_argument('--wandb', action='store_true', help='Use Weights & Biases for logging if set.')
     return parser.parse_args()
+
 
 def create_logger(logging_dir):
     """
@@ -126,16 +129,26 @@ def prepare_dataloader(
     workers: int,
     rank: int,
     world_size: int,
+    cfg: DictConfig,
 ) -> Tuple[DataLoader, DistributedSampler]:
     first_crop_size = 384 if image_size == 256 else int(image_size * 1.5)
-    transform = transforms.Compose(
-        [
-            transforms.Resize(first_crop_size, interpolation=transforms.InterpolationMode.BICUBIC),
-            transforms.RandomCrop(image_size),
+    if cfg.dataset == "imagenet":
+        transform = transforms.Compose(
+            [
+                transforms.Resize(first_crop_size, interpolation=transforms.InterpolationMode.BICUBIC),
+                transforms.RandomCrop(image_size),
+                transforms.ToTensor(),
+            ]
+        )
+        dataset = ImageFolder(f"{cfg.data_path}/imagenet-mini", transform=transform)
+    else:
+        transform = transforms.Compose([
+            # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
+            # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-        ]
-    )
-    dataset = ImageFolder(str(data_path), transform=transform)
+        ])        
+        dataset = TextDataset(cfg.data_path, transform=transform, num_stories=cfg.training.num_examples)        
+    # st()
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     loader = DataLoader(
         dataset,
@@ -212,12 +225,16 @@ def load_checkpoint(
         disc_scheduler.load_state_dict(checkpoint["disc_scheduler"])
     return checkpoint.get("epoch", 0), checkpoint.get("step", 0)
 
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
-def main():
-    args = parse_args()
+@hydra.main(version_base=None, config_path="../configs", config_name="main_s1.yaml")
+def main(cfg: DictConfig):
+    # args = parse_args()
     rank, world_size, device = setup_distributed()
-    (rae_config, *_) = parse_configs(args.config)
-    full_cfg = OmegaConf.load(args.config)
+    (rae_config, *_) = parse_configs(cfg)
+    # full_cfg = OmegaConf.load(cfg)
+    full_cfg = cfg
     training_section = full_cfg.get("training", None)
     training_cfg = OmegaConf.to_container(training_section, resolve=True) if training_section is not None else {}
     training_cfg = dict(training_cfg) if isinstance(training_cfg, dict) else {}
@@ -249,31 +266,39 @@ def main():
         clip_grad = None
     log_interval = int(training_cfg.get("log_interval", 100))
     checkpoint_interval = int(training_cfg.get("checkpoint_interval", 1000))
+    log_image_interval = int(training_cfg.get("log_image_interval", 1))
     ema_decay = float(training_cfg.get("ema_decay", 0.9999))
     num_epochs = int(training_cfg.get("epochs", 200))
     default_seed = int(training_cfg.get("global_seed", 0))
-    global_seed = args.global_seed if args.global_seed is not None else default_seed
+    global_seed = cfg.global_seed if cfg.global_seed is not None else default_seed
     seed = global_seed * world_size + rank
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     if rank == 0:
-        os.makedirs(args.results_dir, exist_ok=True)
-        experiment_index = len(glob(f"{args.results_dir}/*")) - 1
-        model_target = str(rae_config.get("target", "stage1"))
-        model_string_name = model_target.split(".")[-1]
-        precision_suffix = f"-{args.precision}" if args.precision == "bf16" else ""
-        experiment_name = (
-            f"{experiment_index:03d}-{model_string_name}{precision_suffix}"
-        )
-        experiment_dir = os.path.join(args.results_dir, experiment_name)
+        if cfg.wandb:
+            entity = "mprabhud"
+            project = "pixel-llm"
+            wandb_utils.initialize(cfg, entity, None, project)        
+        os.makedirs(cfg.results_dir, exist_ok=True)
+        if cfg.wandb:
+            experiment_name = wandb.run.name
+        else:
+            experiment_index = len(glob(f"{cfg.results_dir}/*")) - 1
+            model_target = str(rae_config.get("target", "stage1"))
+            model_string_name = model_target.split(".")[-1]
+            precision_suffix = f"-{cfg.precision}" if cfg.precision == "bf16" else ""
+            if cfg.wandb:
+                experiment_name = wandb.run.name
+            else:
+                experiment_name = (
+                    f"{experiment_index:03d}-{model_string_name}{precision_suffix}"
+                )
+        experiment_dir = os.path.join(cfg.results_dir, experiment_name)
         checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
         os.makedirs(checkpoint_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
-        if args.wandb:
-            entity = os.environ["ENTITY"]
-            project = os.environ["PROJECT"]
-            wandb_utils.initialize(args, entity, experiment_name, project)
+
     else:
         experiment_dir = None
         checkpoint_dir = None
@@ -296,6 +321,7 @@ def main():
     disc_optimizer, disc_optim_msg = build_optimizer(disc_params, disc_cfg)
     disc_scheduler: LambdaLR | None = None
     disc_sched_msg: Optional[str] = None
+    # st()
 
     discriminator.train()
     disc_loss_fn, gen_loss_fn = select_gan_losses(disc_loss_type, gen_loss_type)
@@ -304,10 +330,10 @@ def main():
     lpips.eval()
 
     scaler: GradScaler | None
-    if args.precision == "fp16":
+    if cfg.precision == "fp16":
         scaler = GradScaler()
         autocast_kwargs = dict(enabled=True, dtype=torch.float16)
-    elif args.precision == "bf16":
+    elif cfg.precision == "bf16":
         scaler = None
         autocast_kwargs = dict(enabled=True, dtype=torch.bfloat16)
     else:
@@ -315,7 +341,7 @@ def main():
         autocast_kwargs = dict(enabled=False)
 
     loader, sampler = prepare_dataloader(
-        args.data_path, args.image_size, batch_size, num_workers, rank, world_size
+        cfg.data_path, cfg.image_size, batch_size, num_workers, rank, world_size, cfg
     )
     steps_per_epoch = len(loader)
     if steps_per_epoch == 0:
@@ -330,8 +356,8 @@ def main():
         disc_scheduler, disc_sched_msg = build_scheduler(disc_optimizer, steps_per_epoch, disc_cfg)
     start_epoch = 0
     global_step = 0
-    if args.ckpt:
-        ckpt_path = Path(args.ckpt)
+    if cfg.ckpt:
+        ckpt_path = Path(cfg.ckpt)
         if ckpt_path.is_file():
             start_epoch, global_step = load_checkpoint(
                 ckpt_path,
@@ -386,6 +412,7 @@ def main():
             use_gan = global_step >= gan_start_step and disc_weight > 0.0
             train_disc = global_step >= disc_update_step and disc_weight > 0.0
             use_lpips = global_step >= lpips_start_step and perceptual_weight > 0.0
+            
             images = images.to(device, non_blocking=True)
             real_normed = images * 2.0 - 1.0
             optimizer.zero_grad(set_to_none=True)
@@ -492,9 +519,25 @@ def main():
                     f"[Epoch {epoch} | Step {global_step}] "
                     + ", ".join(f"{k}: {v:.4f}" for k, v in stats.items())
                 )
-                if args.wandb:
+                if cfg.wandb:
                     wandb_utils.log(stats, step=global_step)
-
+            if log_image_interval > 0 and global_step % log_image_interval == 0 and rank == 0:
+                # Log reconstruction images
+                # st()
+                with torch.no_grad():
+                    # Get a small batch for visualization (first 4 images)
+                    vis_batch = images[:4]
+                    vis_recon = recon[:4]
+                    
+                    # Ensure images are in [0, 1] range
+                    vis_input = torch.clamp(vis_batch, 0, 1)
+                    vis_recon = torch.clamp(vis_recon, 0, 1)
+                    
+                    # Log original images
+                    wandb_utils.log_image(vis_input, step=global_step, prefix="input_")
+                    
+                    # Log reconstructed images
+                    wandb_utils.log_image(vis_recon, step=global_step, prefix="recon_")
             if checkpoint_interval > 0 and global_step % checkpoint_interval == 0 and rank == 0:
                 ckpt_path = f"{checkpoint_dir}/{global_step:07d}.pt"
                 save_checkpoint(
@@ -509,6 +552,8 @@ def main():
                     disc_optimizer,
                     disc_scheduler,
                 )
+     
+                    
 
             global_step += 1
 
@@ -527,7 +572,7 @@ def main():
                 f"[Epoch {epoch}] "
                 + ", ".join(f"{k}: {v:.4f}" for k, v in epoch_stats.items())
             )
-            if args.wandb:
+            if cfg.wandb:
                 wandb_utils.log(epoch_stats, step=global_step)
     cleanup_distributed()
 
