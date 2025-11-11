@@ -268,6 +268,7 @@ def main(cfg: DictConfig):
     rae.eval()
 
     model: Stage2ModelProtocol = instantiate_from_config(model_config).to(device)
+    # st()
     ema = deepcopy(model).to(device)
     requires_grad(ema, False)
 
@@ -422,6 +423,8 @@ def main(cfg: DictConfig):
             with torch.no_grad():
                 if rae_config.target == "ocr":
                     x = rae.get_image_features(x)
+                    if cfg.precision == "fp32":
+                        x = x.to(torch.float32)
                     
                     bs, num_tokens, dim = x.shape
                     x = x.permute(0, 2, 1)
@@ -514,8 +517,8 @@ def main(cfg: DictConfig):
                         prompt = "<image>\n<|grounding|>Convert the document to markdown. "
                         decoded_text = []
                         
-                        samples = samples.flatten(2).permute(0, 2, 1)
-                        input_sample = x.flatten(2).permute(0, 2, 1)
+                        samples = samples.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
+                        input_sample = x.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
                         input_text =  rae.infer(deepseek_tokenizer,image_features=[input_sample[0].unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
                         print(f"input sample: {input_text}")
                         mse_difference = torch.nn.functional.mse_loss(input_sample[0], samples[0])
