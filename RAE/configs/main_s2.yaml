@@ -86,7 +86,7 @@ training:
   clip_grad: 1.0
 
 data_path: ${oc.env:DATA_DIR}
-results_dir: results/
+results_dir: ${oc.env:RAE_RESULTS_DIR}
 image_size: 256
 precision: bf16
 global_seed: null

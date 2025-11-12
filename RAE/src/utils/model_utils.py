@@ -26,6 +26,7 @@ def instantiate_from_config(config) -> object:
         model = AutoModel.from_pretrained(model_name, _attn_implementation='flash_attention_2', trust_remote_code=True, use_safetensors=True)
         model = model.eval().cuda().to(torch.bfloat16)        
     else:
+        # st()
         model = get_obj_from_str(config["target"])(**config.get("params", dict()))
         ckpt_path = config.get("ckpt", None)
         if ckpt_path is not None:

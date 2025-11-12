@@ -63,10 +63,10 @@ def log(stats, step=None):
         wandb.log({k: v for k, v in stats.items()}, step=step)
 
 
-def log_image(sample, step=None):
+def log_image(sample, step=None, prefix=None):
     if is_main_process():
         sample = array2grid(sample)
-        wandb.log({f"samples": wandb.Image(sample), "train_step": step})
+        wandb.log({f"{prefix}samples": wandb.Image(sample), "train_step": step})
 
 
 def log_table(table, step=None):

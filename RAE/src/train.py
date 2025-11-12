@@ -38,7 +38,7 @@ from stage1 import RAE
 from stage2.models import Stage2ModelProtocol
 from stage2.transport import create_transport, Sampler
 from utils.train_utils import parse_configs
-from utils.basic_utils import create_text_image
+from utils.basic_utils import create_text_image, TextDataset
 from utils.model_utils import instantiate_from_config
 from utils import wandb_utils
 from utils.optim_utils import build_optimizer, build_scheduler
@@ -119,93 +119,6 @@ def center_crop_arr(pil_image, image_size):
 #                              Custom Dataset Class                             #
 #################################################################################
 
-class TextDataset(Dataset):
-    """
-    Custom image dataset class that loads images from a directory structure.
-    
-    Supports both ImageFolder-style structure (with class subdirectories) and
-    flat directory structure (all images in one directory).
-    
-    Args:
-        root (str): Root directory path containing images
-        transform (callable, optional): Optional transform to be applied on a sample
-        class_subdirs (bool): If True, expects ImageFolder structure with class subdirectories.
-                             If False, treats root as a flat directory with all images.
-    """
-    
-    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000):
-        self.root = root
-        self.transform = transform
-        # st()
-        
-        # Load TinyStories dataset
-        print("Loading TinyStories dataset...")
-        dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
-        # st()
-        # Convert dataset to list to get length and indexing
-        self.stories = []
-        print("Converting dataset to list...")
-        for i, story in enumerate(dataset):
-            if i >= num_stories:  # Limit to first 10k stories for memory
-                break            
-            self.stories.append(story['text'])
-
-        # create_text_image(self.stories[0])
-        # st()
-        if len(self.stories) < 8:
-            self.stories = self.stories * 1024
-        # st()
-        print(f"Loaded {len(self.stories)} stories")
-
-    def __len__(self):
-        return len(self.stories)
-    
-    def __getitem__(self, idx):
-        """
-        Get an image created from text and its label.
-        
-        Args:
-            idx (int): Index of the sample
-            
-        Returns:
-            tuple: (image, label) where image is a PIL Image or transformed tensor,
-                   and label is an integer class index
-        """
-        # print(f"idx: {idx}")
-        text = self.stories[idx]
-        
-        
-        try:
-            # Create image from text using create_text_image            
-            img_array, txt_array = create_text_image(text)
-            
-            if img_array is None:
-                # If text is too long, try next story
-                if idx < len(self.stories) - 1:
-                    return self.__getitem__(idx + 1)
-                else:
-                    return self.__getitem__(0)
-            
-            # Convert BGR to RGB (cv2 uses BGR, PIL uses RGB)
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-            
-            # Convert numpy array to PIL Image
-            from PIL import Image
-            image = Image.fromarray(img_array)
-            
-        except Exception as e:
-            # If image creation fails, try to load a different story
-            warnings.warn(f"Failed to create image for story {idx}: {e}. Trying next story.")
-            if idx < len(self.stories) - 1:
-                return self.__getitem__(idx + 1)
-            else:
-                return self.__getitem__(0)
-        # Apply transform if provided
-        if self.transform is not None:
-            image = self.transform(image)
-        
-        return image, text
-
 
 #################################################################################
 #                                  Training Loop                                #
@@ -215,7 +128,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 
-@hydra.main(version_base=None, config_path="../configs/stage2/training/ImageNet256", config_name="custom")
+@hydra.main(version_base=None, config_path="../configs", config_name="main_s2.yaml")
 def main(cfg: DictConfig):
     """Trains a new SiT model using Hydra configuration."""
     if not torch.cuda.is_available():
@@ -392,7 +305,7 @@ def main(cfg: DictConfig):
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
         ])        
-        dataset = ImageFolder(cfg.data_path, transform=transform)
+        dataset = ImageFolder(f"{cfg.data_path}/imagenet-mini", transform=transform)
     else:
         transform = transforms.Compose([
             # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
