@@ -1,0 +1,10 @@
+# @package _global_
+
+training:
+  epochs: 10000
+  scheduler:
+    final_lr: 2.0e-4
+gan:
+  loss:
+    disc_weight: 0.0
+    perceptual_weight: 0.0

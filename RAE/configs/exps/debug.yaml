@@ -2,9 +2,20 @@
 use_model_forward: true
 
 training:
+  epochs: 10000
   global_batch_size: 8
   batch_size: 8
   sample_every: 10
   num_examples: 1
   gen_global_batch_size: 8
+  checkpoint_interval: -1
   log_every: 10
+  scheduler:
+    final_lr: 2.0e-4
+gan:
+  loss:
+    disc_weight: 0.0
+    perceptual_weight: 0.0
+stage_1:
+  params:
+    noise_tau: 0.0 # training 0.8, at inference time always set to 0

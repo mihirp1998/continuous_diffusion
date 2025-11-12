@@ -2,3 +2,4 @@
 
 training:
   global_batch_size: 256
+  batch_size: 32
