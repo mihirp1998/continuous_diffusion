@@ -412,6 +412,8 @@ class DeepseekOCRModel(DeepseekV2Model):
         images_spatial_crop: Optional[torch.FloatTensor] = None,
         return_image_features: Optional[bool] = False,
         return_dict: Optional[bool] = None,
+        compute_loss: Optional[bool] = False,
+        label_ids: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         
         
@@ -563,6 +565,9 @@ class DeepseekOCRModel(DeepseekV2Model):
                         
 
                     idx += 1
+        # print(inputs_embeds.shape, attention_mask.shape)
+        # if len(past_key_values.key_cache) > 0:
+        #     print(past_key_values.key_cache[0].shape)
         if return_image_features:
             return all_image_features
         else:
@@ -609,6 +614,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         images_seq_mask: Optional[torch.FloatTensor] = None,
+        label_ids: Optional[torch.LongTensor] = None,
         images_features: Optional[torch.FloatTensor] = None,
         images_spatial_crop: Optional[torch.FloatTensor] = None,
         return_image_features: Optional[bool] = False,
@@ -620,7 +626,6 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
 
 
         outputs  = self.model(
@@ -637,7 +642,8 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             images_features = images_features,
             images_spatial_crop = images_spatial_crop,
             return_dict=return_dict,
-            return_image_features=return_image_features
+            return_image_features=return_image_features,
+            label_ids=label_ids
             
         )
 
@@ -751,6 +757,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                 "images_spatial_crop": kwargs.get("images_spatial_crop", None),
                 "images_features": kwargs.get("images_features", None),
                 "return_image_features": kwargs.get("return_image_features", False),
+                "label_ids": kwargs.get("label_ids", None),
             }
         )
         return model_inputs
@@ -775,7 +782,135 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         return global_features
         
 
+    def generate_text(self, features, tokenizer):
+        prompt = "<image>\n<|grounding|>Convert the document to markdown."
+        patch_size = 16
+        downsample_ratio = 4
+        image_size = 512
 
+        valid_img_tokens = 0
+        ratio = 1
+        image_token_id = 128815
+        image_token = '<image>'
+        images = [None] * len(features)
+        images_seq_mask = []
+        text_splits = prompt.split(image_token)
+        images_list, images_crop_list, images_seq_mask = [], [], []
+        tokenized_str = []
+        images_spatial_crop = []     
+        for text_sep, image in zip(text_splits, images):
+            tokenized_sep = text_encode(tokenizer, text_sep, bos=False, eos=False)
+            tokenized_str += tokenized_sep
+            images_seq_mask += [False] * len(tokenized_sep)  
+            valid_img_tokens += int(64 * 1)
+            num_queries = math.ceil((image_size // patch_size) / downsample_ratio)
+            tokenized_image = ([image_token_id] * num_queries + [image_token_id]) * num_queries
+            tokenized_image += [image_token_id]
+            tokenized_str += tokenized_image
+            images_seq_mask += [True] * len(tokenized_image)
+            
+        tokenized_sep = text_encode(tokenizer, text_splits[-1], bos=False, eos=False)
+        tokenized_str += tokenized_sep
+        images_seq_mask += [False] * len(tokenized_sep)
+        bos_id = 0
+        tokenized_str = [bos_id] + tokenized_str 
+        images_seq_mask = [False] + images_seq_mask
+        input_ids = torch.LongTensor(tokenized_str)
+        images_seq_mask = torch.tensor(images_seq_mask, dtype=torch.bool)
+        images_ori = torch.zeros((1, 3, image_size, image_size))
+        images_spatial_crop = torch.zeros((1, 2), dtype=torch.long)
+        images_crop = torch.zeros((1, 3, image_size, image_size))  
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.no_grad():
+                output_ids = self.generate(
+                    input_ids.unsqueeze(0).cuda(),
+                    images=[(images_crop.cuda(), images_ori.cuda())],
+                    images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
+                    images_spatial_crop = images_spatial_crop,
+                    images_features = features,
+                    # do_sample=False,
+                    # num_beams = 1,
+                    temperature=0.0,
+                    eos_token_id=tokenizer.eos_token_id,
+                    max_new_tokens=500,
+                    # no_repeat_ngram_size = 35,
+                    use_cache = True
+                    )       
+        outputs = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).cuda().shape[1]:])
+        stop_str = '<｜end▁of▁sentence｜>'
+        if outputs.endswith(stop_str):
+            outputs = outputs[:-len(stop_str)]
+        # re_match
+        outputs = outputs.strip()      
+        return outputs
+
+
+    def compute_loss(self, features, tokenizer, label_text):
+        prompt = "<image>\n<|grounding|>Convert the document to markdown."
+        patch_size = 16
+        downsample_ratio = 4
+        image_size = 512
+
+        valid_img_tokens = 0
+        ratio = 1
+        image_token_id = 128815
+        image_token = '<image>'
+        images = [None] * len(features)
+        images_seq_mask = []
+        text_splits = prompt.split(image_token)
+        images_list, images_crop_list, images_seq_mask = [], [], []
+        tokenized_str = []
+        images_spatial_crop = []     
+        for text_sep, image in zip(text_splits, images):
+            tokenized_sep = text_encode(tokenizer, text_sep, bos=False, eos=False)
+            tokenized_str += tokenized_sep
+            images_seq_mask += [False] * len(tokenized_sep)  
+            valid_img_tokens += int(64 * 1)
+            num_queries = math.ceil((image_size // patch_size) / downsample_ratio)
+            tokenized_image = ([image_token_id] * num_queries + [image_token_id]) * num_queries
+            tokenized_image += [image_token_id]
+            tokenized_str += tokenized_image
+            images_seq_mask += [True] * len(tokenized_image)
+        # st() 
+        tokenized_sep = text_encode(tokenizer, text_splits[-1], bos=False, eos=False)
+        tokenized_str += tokenized_sep
+        images_seq_mask += [False] * len(tokenized_sep)
+        bos_id = 0
+        tokenized_str = [bos_id] + tokenized_str 
+        images_seq_mask = [False] + images_seq_mask
+        input_ids = torch.LongTensor(tokenized_str)
+        images_seq_mask = torch.tensor(images_seq_mask, dtype=torch.bool)
+        images_ori = torch.zeros((1, 3, image_size, image_size))
+        images_spatial_crop = torch.zeros((1, 2), dtype=torch.long)
+        images_crop = torch.zeros((1, 3, image_size, image_size))  
+        label_ids = tokenizer.encode(label_text)
+        # st()
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.no_grad():
+                output_ids = self.forward(
+                    input_ids.unsqueeze(0).cuda(),
+                    images=[(images_crop.cuda(), images_ori.cuda())],
+                    images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
+                    images_spatial_crop = images_spatial_crop,
+                    images_features = features,
+                    label_ids = label_ids.unsqueeze(0).cuda(),
+                    # do_sample=False,
+                    # num_beams = 1,
+                    # temperature=0.0,
+                    # eos_token_id=tokenizer.eos_token_id,
+                    # max_new_tokens=500,
+                    # no_repeat_ngram_size = 35,
+                    use_cache = True
+                    )       
+        outputs = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).cuda().shape[1]:])
+        stop_str = '<｜end▁of▁sentence｜>'
+        if outputs.endswith(stop_str):
+            outputs = outputs[:-len(stop_str)]
+        # re_match
+        outputs = outputs.strip()      
+        return outputs
+        
+        
 
     def infer(self, tokenizer, image_features=None, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False, max_new_tokens=250):
         self.disable_torch_init()
@@ -816,7 +951,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         else:
             assert False, f'prompt is none!'
         
-        # st()
+        
         prompt = format_messages(conversations=conversation, sft_format='plain', system_prompt='')
 
         patch_size = 16
