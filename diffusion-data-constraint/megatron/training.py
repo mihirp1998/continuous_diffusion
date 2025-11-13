@@ -130,6 +130,9 @@ def pretrain(train_valid_test_dataset_provider,
                         args_defaults=args_defaults, external_args=external_args)
 
     args = get_args()
+    # import ipdb
+    # st = ipdb.set_trace
+    # st()
 
     if found_kill_switch():
         print_datetime(f"Detected kill switch at {args.kill_switch_file}. Exiting")
@@ -1256,6 +1259,8 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
     timers('interval-time', log_level=0).start(barrier=True)
     print_datetime('before the start of training step')
+    
+    st()
 
     # Compute number of parameters in model.
     num_params = get_parameters_in_billions(model)
@@ -1663,6 +1668,8 @@ def build_train_valid_test_data_loaders(
         do_train = train_dataloader is not None and args.train_iters > 0
         do_valid = valid_dataloader is not None and args.eval_iters > 0
         do_test = test_dataloader is not None and args.eval_iters > 0
+        do_valid = False
+        do_test = False
 
         # Need to broadcast num_tokens and num_type_tokens.
         flags = get_accelerator().LongTensor(

@@ -1,4 +1,0 @@
-# @package _global_
-
-training:
-  global_batch_size: 256

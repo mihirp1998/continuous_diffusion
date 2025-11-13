@@ -24,6 +24,7 @@ from PIL import Image
 from copy import deepcopy
 from glob import glob
 from time import time
+import math
 import argparse
 import ipdb
 st = ipdb.set_trace
@@ -37,7 +38,7 @@ from stage1 import RAE
 from stage2.models import Stage2ModelProtocol
 from stage2.transport import create_transport, Sampler
 from utils.train_utils import parse_configs
-from utils.basic_utils import create_text_image
+from utils.basic_utils import create_text_image, TextDataset
 from utils.model_utils import instantiate_from_config
 from utils import wandb_utils
 from utils.optim_utils import build_optimizer, build_scheduler
@@ -118,93 +119,6 @@ def center_crop_arr(pil_image, image_size):
 #                              Custom Dataset Class                             #
 #################################################################################
 
-class TextDataset(Dataset):
-    """
-    Custom image dataset class that loads images from a directory structure.
-    
-    Supports both ImageFolder-style structure (with class subdirectories) and
-    flat directory structure (all images in one directory).
-    
-    Args:
-        root (str): Root directory path containing images
-        transform (callable, optional): Optional transform to be applied on a sample
-        class_subdirs (bool): If True, expects ImageFolder structure with class subdirectories.
-                             If False, treats root as a flat directory with all images.
-    """
-    
-    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000):
-        self.root = root
-        self.transform = transform
-        # st()
-        
-        # Load TinyStories dataset
-        print("Loading TinyStories dataset...")
-        dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
-        # st()
-        # Convert dataset to list to get length and indexing
-        self.stories = []
-        print("Converting dataset to list...")
-        for i, story in enumerate(dataset):
-            if i >= num_stories:  # Limit to first 10k stories for memory
-                break            
-            self.stories.append(story['text'])
-
-        # create_text_image(self.stories[0])
-        # st()
-        if len(self.stories) < 8:
-            self.stories = self.stories * 1024
-        # st()
-        print(f"Loaded {len(self.stories)} stories")
-
-    def __len__(self):
-        return len(self.stories)
-    
-    def __getitem__(self, idx):
-        """
-        Get an image created from text and its label.
-        
-        Args:
-            idx (int): Index of the sample
-            
-        Returns:
-            tuple: (image, label) where image is a PIL Image or transformed tensor,
-                   and label is an integer class index
-        """
-        # print(f"idx: {idx}")
-        text = self.stories[idx]
-        
-        
-        try:
-            # Create image from text using create_text_image            
-            img_array, txt_array = create_text_image(text)
-            
-            if img_array is None:
-                # If text is too long, try next story
-                if idx < len(self.stories) - 1:
-                    return self.__getitem__(idx + 1)
-                else:
-                    return self.__getitem__(0)
-            
-            # Convert BGR to RGB (cv2 uses BGR, PIL uses RGB)
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-            
-            # Convert numpy array to PIL Image
-            from PIL import Image
-            image = Image.fromarray(img_array)
-            
-        except Exception as e:
-            # If image creation fails, try to load a different story
-            warnings.warn(f"Failed to create image for story {idx}: {e}. Trying next story.")
-            if idx < len(self.stories) - 1:
-                return self.__getitem__(idx + 1)
-            else:
-                return self.__getitem__(0)
-        # Apply transform if provided
-        if self.transform is not None:
-            image = self.transform(image)
-        
-        return image, text
-
 
 #################################################################################
 #                                  Training Loop                                #
@@ -214,7 +128,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 
-@hydra.main(version_base=None, config_path="../configs/stage2/training/ImageNet256", config_name="custom")
+@hydra.main(version_base=None, config_path="../configs", config_name="main_s2.yaml")
 def main(cfg: DictConfig):
     """Trains a new SiT model using Hydra configuration."""
     if not torch.cuda.is_available():
@@ -283,6 +197,7 @@ def main(cfg: DictConfig):
     seed = global_seed * world_size + rank
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+    best_loss = float('inf')
     if rank == 0:
         print(f"Starting rank={rank}, seed={seed}, world_size={world_size}.")
     assert gen_global_batch_size >= world_size, "gen_global_batch_size must be greater than world_size"
@@ -362,9 +277,9 @@ def main(cfg: DictConfig):
     opt_state = None
     sched_state = None
     train_steps = 0
-
+    
     if cfg.ckpt is not None:
-        checkpoint = torch.load(cfg.ckpt, map_location="cpu")
+        checkpoint = torch.load(cfg.ckpt, map_location="cpu", weights_only=False)
         if "model" in checkpoint:
             model.load_state_dict(checkpoint["model"])
         if "ema" in checkpoint:
@@ -390,7 +305,7 @@ def main(cfg: DictConfig):
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
         ])        
-        dataset = ImageFolder(cfg.data_path, transform=transform)
+        dataset = ImageFolder(f"{cfg.data_path}/imagenet-mini", transform=transform)
     else:
         transform = transforms.Compose([
             # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, cfg.image_size)),
@@ -495,6 +410,7 @@ def main(cfg: DictConfig):
             model_fn = model.forward
         else:
             model_fn = ema.forward
+            normal_fn = model.forward
         # st()
 
     logger.info(f"Training for {epochs} epochs...")
@@ -586,8 +502,27 @@ def main(cfg: DictConfig):
                     }
                     # st()
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
-                    torch.save(checkpoint, checkpoint_path)
-                    logger.info(f"Saved checkpoint to {checkpoint_path}")
+                    
+                    # avg_loss = torch.tensor(running_loss, device=device)
+                    # dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
+                    # avg_loss = loss_tensor.item() / world_size
+                    
+                    if not math.isnan(loss_tensor.item()):
+                        torch.save(checkpoint, checkpoint_path)
+                    
+                    # Delete older checkpoints to save disk space
+                    import glob
+                    existing_checkpoints = glob.glob(f"{checkpoint_dir}/*.pt")
+                    existing_checkpoints.sort()
+                    # Keep only the latest 1 checkpoint
+                    if len(existing_checkpoints) > 1:
+                        for old_checkpoint in existing_checkpoints[:-1]:
+                            try:
+                                os.remove(old_checkpoint)
+                                logger.info(f"Deleted old checkpoint: {old_checkpoint}")
+                            except OSError as e:
+                                logger.warning(f"Failed to delete checkpoint {old_checkpoint}: {e}")
+                        logger.info(f"Saved checkpoint to {checkpoint_path}")
                 dist.barrier()
 
             if sample_every != -1 and (train_steps % sample_every == 0 or train_steps == 1):
@@ -595,6 +530,8 @@ def main(cfg: DictConfig):
                 with torch.no_grad():
                     with autocast(**autocast_kwargs):
                         samples = eval_sampler(zs, model_fn, **sample_model_kwargs)[-1]
+                        normal_samples = eval_sampler(zs, normal_fn, **sample_model_kwargs)[-1]
+                       
                     dist.barrier()
 
                     if using_cfg:
@@ -605,6 +542,7 @@ def main(cfg: DictConfig):
                         decoded_text = []
                         
                         samples = samples.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
+                        normal_samples = normal_samples.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
                         input_sample = x.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
                         input_text =  rae.infer(deepseek_tokenizer,image_features=[input_sample[0].unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
                         print(f"input sample: {input_text}")
@@ -616,15 +554,30 @@ def main(cfg: DictConfig):
                                 step=train_steps,
                             )
                         
+                        # Process generated samples
                         for sample in samples:
                             res_text =  rae.infer(deepseek_tokenizer,image_features=[sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
                             decoded_text.append(res_text)
+                        
+                        # Process normal samples
+                        normal_decoded_text = []
+                        for normal_sample in normal_samples:
+                            normal_res_text = rae.infer(deepseek_tokenizer,image_features=[normal_sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+                            normal_decoded_text.append(normal_res_text)
+                        
                         # Gather text from all processes
                         gathered_text = [None] * world_size
                         dist.all_gather_object(gathered_text, decoded_text)
                         samples = [text for process_texts in gathered_text for text in process_texts]
                         single_sample = samples[0]
                         print(f"generated sample: {single_sample}")
+                        
+                        # Gather normal text from all processes
+                        gathered_normal_text = [None] * world_size
+                        dist.all_gather_object(gathered_normal_text, normal_decoded_text)
+                        normal_samples_text = [text for process_texts in gathered_normal_text for text in process_texts]
+                        single_normal_sample = normal_samples_text[0]
+                        print(f"normal sample: {single_normal_sample}")
 
                         if cfg.wandb:
                             # Update persistent vis_table_dict with new samples
@@ -633,13 +586,24 @@ def main(cfg: DictConfig):
                                 vis_dict.append({
                                     "train_step": train_steps,
                                     "sample_id": sample_id,
-                                    "text": text
+                                    "text": text,
+                                    "type": "ema"
                                 })
                             
+                            # Add normal samples to vis_dict
+                            for i, text in enumerate(normal_samples_text):
+                                sample_id = f"normal_sample_{i}"
+                                vis_dict.append({
+                                    "train_step": train_steps,
+                                    "sample_id": sample_id,
+                                    "text": text,
+                                    "type": "normal"
+                                })
+                            # st()
                             # Create wandb table from vis_table_dict
-                            table = wandb.Table(columns=["train_step", "sample_id", "text"])
+                            table = wandb.Table(columns=["train_step", "sample_id", "text", "type"])
                             for entry in vis_dict:
-                                table.add_data(entry["train_step"], entry["sample_id"], entry["text"])
+                                table.add_data(entry["train_step"], entry["sample_id"], entry["text"], entry["type"])
                             
                             wandb_utils.log_table(table, train_steps)
                     else:

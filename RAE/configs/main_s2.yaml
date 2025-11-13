@@ -1,3 +1,7 @@
+defaults:
+  - _self_
+  - /exps: []
+
 stage_1:
   target: stage1.RAE
   params:
@@ -31,7 +35,7 @@ stage_2:
     use_rmsnorm: true
     wo_shift: false
     use_pos_embed: true
-
+    y_embedder: true
 transport:
   params:
     path_type: 'Linear'
@@ -62,6 +66,8 @@ misc:
 
 training:
   global_seed: 0
+  gen_global_batch_size: 1024
+  num_examples: 500000
   epochs: 1400
   global_batch_size: 1024
   grad_accum_steps: 1 # change according to your GPU memory
@@ -78,3 +84,13 @@ training:
   decay_start_epoch: 40
   decay_end_epoch: 800
   clip_grad: 1.0
+
+data_path: ${oc.env:DATA_DIR}
+results_dir: ${oc.env:RAE_RESULTS_DIR}
+image_size: 256
+precision: bf16
+global_seed: null
+ckpt: null
+wandb: true
+dataset: imagenet
+use_model_forward: false

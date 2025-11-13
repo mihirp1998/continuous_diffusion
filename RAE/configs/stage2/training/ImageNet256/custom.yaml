@@ -85,7 +85,7 @@ training:
   decay_end_epoch: 800
   clip_grad: 1.0
 
-data_path: /home/mprabhud/imagenet-mini
+data_path: ${oc.env:DATA_DIR}
 results_dir: results/
 image_size: 256
 precision: bf16

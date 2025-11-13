@@ -3,6 +3,8 @@
 """Pretrain GPT"""
 
 import torch
+import ipdb
+st = ipdb.set_trace
 import math
 from functools import partial
 from megatron import get_args
@@ -308,6 +310,7 @@ def forward_step(data_iterator, model):
     """Forward step."""
     args = get_args()
     timers = get_timers()
+    st()
 
     # Get the batch.
     timers('batch-generator', log_level=2).start()
@@ -330,6 +333,8 @@ def forward_step(data_iterator, model):
     else:
         output_tensor, other_losses = model(tokens, position_ids, attention_mask,
                                             labels=labels)
+        
+    
     if args.curriculum_learning_legacy and args.curriculum_seqlen < args.seq_length:
         loss_mask = loss_mask[:, :args.curriculum_seqlen].contiguous()
 
@@ -401,6 +406,7 @@ def git_ds_info():
 
 if __name__ == "__main__":
     git_ds_info()
+    st()
     pretrain(train_valid_test_datasets_provider,
              model_provider,
              ModelType.encoder_or_decoder,

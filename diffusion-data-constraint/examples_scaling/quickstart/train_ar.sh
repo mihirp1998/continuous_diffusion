@@ -20,6 +20,7 @@ TENSORBOARD_PATH=output/$TENSORBOARD_NAME
 KILL_SWITCH_PATH=output/$KILL_SWITCH_NAME
 WANDB_PATH=output/$WANDB_NAME
 
+
 VOCAB_FILE=utils/data/gpt2-vocab.json
 MERGE_FILE=utils/data/gpt2-merges.txt
 TRAIN_DATA_PATH=utils/datapaths/train_c4_100m.txt
@@ -28,12 +29,12 @@ VALID_DATA_PATH=utils/datapaths/val_c4.txt
 PP_SIZE=1
 TP_SIZE=1
 
-MICRO_BATCH_SIZE=1
-GLOBAL_BATCH_SIZE=8
+MICRO_BATCH_SIZE=2
+GLOBAL_BATCH_SIZE=256
 
 # Model parameters
 source utils/model_params.sh
-MODEL_PARAM=("${PARAM_44M[@]}")
+MODEL_PARAM=("${PARAM_140M[@]}")
 NHIDDEN=${MODEL_PARAM[0]}
 FFN_HIDDEN_SIZE=${MODEL_PARAM[1]}
 KV_SIZE=${MODEL_PARAM[2]}

@@ -39,7 +39,7 @@ else:
 
 # res = model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
 res = model.get_image_features(image_tensor.cuda())
-# st()
+st()
 # res = model.get_image_features(tokenizer, prompt=prompt, image_tensor=image_tensor, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
 # res[0] = res[0] + torch.randn_like(res[0]) *0.1
 # st()

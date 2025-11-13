@@ -3,6 +3,8 @@ from torch import nn
 import torch
 from math import *
 from . import register_encoder
+import ipdb
+st = ipdb.set_trace
 
 
 @register_encoder()
@@ -20,6 +22,7 @@ class Dinov2withNorm(nn.Module):
         except (OSError, ValueError, AttributeError):
             self.encoder = Dinov2WithRegistersModel.from_pretrained(dinov2_path, local_files_only=False)
         self.encoder.requires_grad_(False)
+        # st()
         if normalize:
             self.encoder.layernorm.elementwise_affine = False
             self.encoder.layernorm.weight = None
