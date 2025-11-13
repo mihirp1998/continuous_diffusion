@@ -41,11 +41,16 @@ else:
 res = model.get_image_features(image_tensor.cuda())
 # st()
 # res = model.get_image_features(tokenizer, prompt=prompt, image_tensor=image_tensor, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
-res[0] = res[0] + torch.randn_like(res[0]) *0.1
-st()
+# res[0] = res[0] + torch.randn_like(res[0]) *0.1
+# st()
 # res = model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
-res_text =  model.infer(tokenizer,image_features=[res[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+# res_text =  model.infer(tokenizer,image_features=[res[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
 # res =model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 1024, image_size = 640, crop_mode=True, eval_mode = True)
-print(res_text)
+
+# res_text =  model.generate_text([res[:1]], tokenizer)
+# print(res_text)
+res_text = "Hello, world!"
+# st()
+compute_loss =  model.compute_loss([res[:1]], tokenizer, res_text)
 st()
 
