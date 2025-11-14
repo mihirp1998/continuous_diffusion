@@ -200,6 +200,18 @@ def save_checkpoint(
         "disc_scheduler": disc_scheduler.state_dict() if disc_scheduler is not None else None,
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    # Delete previous checkpoints
+    checkpoint_dir = os.path.dirname(path)
+    if os.path.exists(checkpoint_dir):
+        for filename in os.listdir(checkpoint_dir):
+            if filename.endswith('.pt'):
+                old_checkpoint_path = os.path.join(checkpoint_dir, filename)
+                try:
+                    os.remove(old_checkpoint_path)
+                except OSError:
+                    pass  # Ignore errors if file is already deleted or locked
+    
     torch.save(state, path)
 
 
@@ -423,7 +435,16 @@ def main(cfg: DictConfig):
                     z = model_woddp.encode(images)
                 recon = model_woddp.decode(z)
                 recon_normed = recon * 2.0 - 1.0
-                rec_loss = F.l1_loss(recon, images)
+                # st()
+                # Apply higher weight to non-1.0 pixels
+                if training_cfg.get("weighted_l1", False):
+                    non_one_mask = (images != 1.0).float()
+                    one_mask = (images == 1.0).float()                    
+                    rec_loss_non_one = F.l1_loss(recon * non_one_mask, images * non_one_mask, reduction='sum') / non_one_mask.sum()
+                    rec_loss_one = F.l1_loss(recon * one_mask, images * one_mask, reduction='sum')/one_mask.sum()
+                    rec_loss = (rec_loss_non_one + rec_loss_one)/2.0
+                else:
+                    rec_loss = F.l1_loss(recon, images)
                 if use_lpips:
                     lpips_loss = lpips(images, recon)
                 else:

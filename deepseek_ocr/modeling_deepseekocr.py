@@ -5,7 +5,8 @@ import re
 from tqdm import tqdm
 from abc import ABC
 from typing import List, Optional, Tuple, Union
-
+import ipdb
+st = ipdb.set_trace
 from addict import Dict
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import numpy as np
@@ -386,6 +387,7 @@ class DeepseekOCRModel(DeepseekV2Model):
         embed_std = 1 / torch.sqrt(torch.tensor(n_embed, dtype=torch.float32))
         self.image_newline = nn.Parameter(torch.randn(n_embed) * embed_std)
         self.view_seperator = nn.Parameter(torch.randn(n_embed) * embed_std)
+        self.random_noise = config.random_noise
 
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
     
@@ -416,7 +418,7 @@ class DeepseekOCRModel(DeepseekV2Model):
         sam_model = getattr(self, 'sam_model', None)
         # sam_model = self.sam_model
         vision_model = getattr(self, 'vision_model', None)
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
 
 
 
@@ -495,6 +497,10 @@ class DeepseekOCRModel(DeepseekV2Model):
                         global_features_2 = vision_model(image_ori, global_features_1) 
                         global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
                         global_features = self.projector(global_features)
+                        if self.random_noise > 0:
+                            noise = self.random_noise * torch.randn_like(global_features)
+                            global_features = global_features + noise
+                        
                         _, hw, n_dim = global_features.shape
                         h = w = int(hw ** 0.5)
 
@@ -568,7 +574,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         return_dict: Optional[bool] = None,
         
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -952,8 +958,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         no_repeat_ngram_size = 35,
                         use_cache = True
                         )
-                
-
+        
         if '<image>' in conversation[0]['content'] and eval_mode:
                 outputs = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).cuda().shape[1]:])
                 stop_str = '<｜end▁of▁sentence｜>'

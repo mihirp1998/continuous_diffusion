@@ -19,6 +19,7 @@ stage_1:
 
 training:
   epochs: 16
+  weighted_l1: false
   ema_decay: 0.9978
   batch_size: 64 # per-proc bs --> make sure total bs is 512
   num_workers: 8

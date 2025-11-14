@@ -23,20 +23,23 @@ class TextDataset(Dataset):
                              If False, treats root as a flat directory with all images.
     """
     
-    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000):
+    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000, eval_mode=False):
         self.root = root
         self.transform = transform
         # st()
         
         # Load TinyStories dataset
         print("Loading TinyStories dataset...")
-        dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+        if eval_mode:
+            dataset = load_dataset("roneneldan/TinyStories", split="validation", streaming=True)
+        else:
+            dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
         # st()
         # Convert dataset to list to get length and indexing
         self.stories = []
         # Store stories to disk for faster loading in future runs
         import pickle
-        stories_cache_path = os.path.join(self.root, f'stories_cache_{num_stories}.pkl')
+        stories_cache_path = os.path.join(self.root, f'stories_cache_{num_stories}_eval_{eval_mode}.pkl')
         # st()
         
         # Try to load from cache first

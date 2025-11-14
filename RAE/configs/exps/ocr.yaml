@@ -17,6 +17,7 @@ stage_1:
       normalize: true
     
 training:
+  weighted_l1: true
   sample_every: 2500
   gen_global_batch_size: 16
 

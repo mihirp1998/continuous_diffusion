@@ -8,3 +8,6 @@ gan:
   loss:
     disc_weight: 0.0
     perceptual_weight: 0.0
+stage_1:
+  params:
+    noise_tau: 0.0 

@@ -2,6 +2,7 @@ from unsloth import FastVisionModel # FastLanguageModel for LLMs
 import ipdb
 st = ipdb.set_trace
 import torch
+import wandb
 from transformers import AutoModel
 import os
 os.environ["UNSLOTH_WARN_UNINITIALIZED"] = '0'
@@ -14,11 +15,13 @@ fourbit_models = [
 ] # More models at https://huggingface.co/unsloth
 from huggingface_hub import snapshot_download
 # snapshot_download("unsloth/DeepSeek-OCR", local_dir = "deepseek_ocr")
+# st()
 model, tokenizer = FastVisionModel.from_pretrained(
     "deepseek_ocr",
     load_in_4bit = False, # Use 4bit to reduce memory use. False for 16bit LoRA.
     auto_model = AutoModel,
     trust_remote_code=True,
+    random_noise = 0.8,
     # unsloth_force_compile=True,
     use_gradient_checkpointing = "unsloth", # True or "unsloth" for long context
 )
@@ -407,9 +410,11 @@ def convert_to_conversation(sample):
 # dataset = dataset.rename_column("image_path", "image")
 # Load dataset using TextDataset
 from RAE.src.utils.basic_utils import TextDataset
-dataset = TextDataset(root="./", num_stories=1000)
+train_dataset = TextDataset(root="./", num_stories=1000)
+val_dataset = TextDataset(root="./", num_stories=100, eval_mode=True)  # Smaller validation set
 
-converted_dataset = [convert_to_conversation(sample) for sample in dataset]
+train_converted_dataset = [convert_to_conversation(sample) for sample in train_dataset]
+val_converted_dataset = [convert_to_conversation(sample) for sample in val_dataset]
 # st()
 
 from transformers import Trainer, TrainingArguments
@@ -423,30 +428,42 @@ data_collator = DeepSeekOCRDataCollator(
     crop_mode=True,
     train_on_responses_only=True,
 )
+# st()
+wandb.init(project="dpsk-ocr-finetuning")
+experiment_name = wandb.run.name
 trainer = Trainer(
     model = model,
     tokenizer = tokenizer,
     data_collator = data_collator, # Must use!
-    train_dataset = converted_dataset,
+    train_dataset = train_converted_dataset,
+    eval_dataset = val_converted_dataset,
     args = TrainingArguments(
         per_device_train_batch_size = 2,
+        per_device_eval_batch_size = 1,
         gradient_accumulation_steps = 4,
         warmup_steps = 5,
         max_steps = 60,
         # num_train_epochs = 1, # Set this instead of max_steps for full training runs
         learning_rate = 2e-4,
         logging_steps = 1,
+        eval_steps = 10,
+        eval_strategy = "steps",
+        save_steps = 10,
+        save_strategy = "steps",
         optim = "adamw_8bit",
         weight_decay = 0.001,
         lr_scheduler_type = "linear",
         seed = 3407,
         fp16 = not is_bf16_supported(),  # Use fp16 if bf16 is not supported
         bf16 = is_bf16_supported(),  # Use bf16 if supported
-        output_dir = "outputs",
-        report_to = "none",     # For Weights and Biases
+        output_dir = f"outputs/{experiment_name}",
+        # report_to = "none",     # For Weights and Biases
         dataloader_num_workers=2,
+        report_to="wandb",
         # You MUST put the below items for vision finetuning:
         remove_unused_columns = False,
     ),
 )
+
+# import ipdb; ipdb.set_trace()
 trainer.train()
