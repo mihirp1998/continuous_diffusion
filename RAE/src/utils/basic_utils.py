@@ -9,6 +9,31 @@ import warnings
 st = ipdb.set_trace
 
 
+def convert_to_conversation(sample):
+    """Convert dataset sample to conversation format"""
+    # Handle both tuple (image, text) from TextDataset and dict from HuggingFace dataset
+    if isinstance(sample, tuple):
+        image, text = sample
+    else:
+        image = sample['image']
+        text = sample['text']
+    instruction = "<image>\nFree OCR. "
+    
+    conversation = [
+        {
+            "role": "<|User|>",
+            "content": instruction,
+            "images": [image]
+        },
+        {
+            "role": "<|Assistant|>",
+            "content": text
+        },
+    ]
+    return {"messages": conversation}
+
+
+
 class TextDataset(Dataset):
     """
     Custom image dataset class that loads images from a directory structure.
@@ -23,7 +48,7 @@ class TextDataset(Dataset):
                              If False, treats root as a flat directory with all images.
     """
     
-    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000, eval_mode=False):
+    def __init__(self, root, transform=None, class_subdirs=True,num_stories=500000, eval_mode=False, convert_to_conversation=False):
         self.root = root
         self.transform = transform
         # st()
@@ -37,6 +62,7 @@ class TextDataset(Dataset):
         # st()
         # Convert dataset to list to get length and indexing
         self.stories = []
+        self.convert_to_conversation = convert_to_conversation
         # Store stories to disk for faster loading in future runs
         import pickle
         stories_cache_path = os.path.join(self.root, f'stories_cache_{num_stories}_eval_{eval_mode}.pkl')
@@ -115,7 +141,8 @@ class TextDataset(Dataset):
         # Apply transform if provided
         if self.transform is not None:
             image = self.transform(image)
-        
+        if self.convert_to_conversation:
+            return convert_to_conversation((image, text))
         return image, text
 
 

@@ -22,7 +22,8 @@ import math
 import warnings
 from typing import List, Optional, Tuple, Union
 import numpy as np
-
+import ipdb
+st = ipdb.set_trace
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -1503,6 +1504,7 @@ class DeepseekV2Model(DeepseekV2PreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None
     ) -> Union[Tuple, BaseModelOutputWithPast]:
+        st()
         output_attentions = (
             output_attentions
             if output_attentions is not None
@@ -1585,7 +1587,7 @@ class DeepseekV2Model(DeepseekV2PreTrainedModel):
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
+            st()
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
@@ -1714,6 +1716,7 @@ class DeepseekV2ForCausalLM(DeepseekV2PreTrainedModel):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
         ```"""
+        # st()
         output_attentions = (
             output_attentions
             if output_attentions is not None
@@ -1745,6 +1748,7 @@ class DeepseekV2ForCausalLM(DeepseekV2PreTrainedModel):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
+        # st()
 
         loss = None
         if labels is not None:

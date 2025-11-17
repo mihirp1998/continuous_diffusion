@@ -528,7 +528,7 @@ class DeepseekOCRModel(DeepseekV2Model):
                     inputs_embeds[idx] = updated_row
 
                 idx += 1
-            
+        # st()
         return super(DeepseekOCRModel, self).forward(
             input_ids=None, attention_mask=attention_mask, past_key_values=past_key_values,
             inputs_embeds=inputs_embeds, use_cache=use_cache, position_ids = position_ids,
@@ -581,7 +581,9 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-
+        # reg_loss = 0.0
+        # for name, param in self.named_parameters():
+        #     reg_loss += torch.sum(param * 0.0)
 
         outputs  = self.model(
             input_ids=input_ids,
@@ -602,9 +604,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-
-        # logits
-
+        
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
@@ -617,6 +617,24 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             # Enable model parallelism
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
+            
+            # For MoE models with DDP + static_graph, we need to ensure ALL trainable parameters participate every iteration
+            # We add a tiny regularization that touches ALL parameters to ensure they get gradients consistently
+            # This is necessary when using _set_static_graph() which requires consistent parameter usage across iterations
+            # if self.training:
+            #     # Collect ALL trainable parameters in the model
+            #     # This ensures every parameter gets a gradient every iteration, satisfying static_graph requirements
+            #     all_trainable_params = [p for p in self.parameters() if p.requires_grad]
+                
+            #     # Create a single regularization term that touches all parameters
+            #     # We use a very small coefficient (1e-10) so it doesn't affect training
+            #     # but ensures all parameters participate in backward pass for static_graph
+            #     if all_trainable_params:
+            #         # Sum all parameters with a very small coefficient
+            #         # This creates a backward path for all parameters without significant impact on loss
+            #         # The key is that ALL parameters are touched every iteration, making the graph "static"
+            #         reg_sum = sum(p.sum() * 1e-10 for p in all_trainable_params)
+            #         loss = loss + reg_sum
 
         if not return_dict:
             output = (logits,) + outputs[1:]

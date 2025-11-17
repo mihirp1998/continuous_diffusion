@@ -2,10 +2,40 @@ from unsloth import FastVisionModel # FastLanguageModel for LLMs
 import ipdb
 st = ipdb.set_trace
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 import wandb
 from transformers import AutoModel
 import os
 os.environ["UNSLOTH_WARN_UNINITIALIZED"] = '0'
+
+# Initialize distributed training
+def setup_distributed():
+    """Initialize distributed training"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+        
+        # Initialize the process group
+        dist.init_process_group(backend='nccl')
+        
+        # Set the device for this process
+        torch.cuda.set_device(local_rank)
+        
+        return rank, world_size, local_rank
+    else:
+        # Single GPU training
+        return 0, 1, 0
+
+# Only initialize distributed if running in distributed mode
+if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+    rank, world_size, local_rank = setup_distributed()
+else:
+    rank, world_size, local_rank = 0, 1, 0
+
+is_main_process = rank == 0
+
 # 4bit pre quantized models we support for 4x faster downloading + no OOMs.
 fourbit_models = [
     "unsloth/Qwen3-VL-8B-Instruct-bnb-4bit", # Qwen 3 vision support
@@ -16,15 +46,39 @@ fourbit_models = [
 from huggingface_hub import snapshot_download
 # snapshot_download("unsloth/DeepSeek-OCR", local_dir = "deepseek_ocr")
 # st()
-model, tokenizer = FastVisionModel.from_pretrained(
-    "deepseek_ocr",
-    load_in_4bit = False, # Use 4bit to reduce memory use. False for 16bit LoRA.
-    auto_model = AutoModel,
-    trust_remote_code=True,
-    random_noise = 0.8,
-    # unsloth_force_compile=True,
-    use_gradient_checkpointing = "unsloth", # True or "unsloth" for long context
-)
+
+# Only load model on main process first to avoid conflicts
+if is_main_process:
+    model, tokenizer = FastVisionModel.from_pretrained(
+        "deepseek_ocr",
+        load_in_4bit = False, # Use 4bit to reduce memory use. False for 16bit LoRA.
+        auto_model = AutoModel,
+        trust_remote_code=True,
+        random_noise = 0.8,        
+        # unsloth_force_compile=True,
+        # use_gradient_checkpointing = "unsloth", # True or "unsloth" for long context
+        use_gradient_checkpointing=False
+    )
+    
+    # Synchronize all processes before others load the model
+    if world_size > 1:
+        dist.barrier()
+else:
+    # Wait for main process to finish loading
+    if world_size > 1:
+        dist.barrier()
+    
+    # Load model on other processes
+    model, tokenizer = FastVisionModel.from_pretrained(
+        "deepseek_ocr",
+        load_in_4bit = False,
+        auto_model = AutoModel,
+        trust_remote_code=True,
+        random_noise = 0.8,
+        # use_gradient_checkpointing = "unsloth",
+        use_gradient_checkpointing=False
+    )
+
 # st()
 # @title Create datacollator
 
@@ -358,29 +412,62 @@ class DeepSeekOCRDataCollator:
         }
 
 from datasets import load_dataset
-dataset = load_dataset("hezarai/parsynth-ocr-200k", split = "train[:2000]")
+# dataset = load_dataset("hezarai/parsynth-ocr-200k", split = "train[:2000]")
+use_peft = False
 
-model = FastVisionModel.get_peft_model(
-    model,
-    target_modules=[
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "gate_proj",
-        "up_proj",
-        "down_proj",
-    ],
+if use_peft:
+    model = FastVisionModel.get_peft_model(
+        model,
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
 
-    r = 16,           # The larger, the higher the accuracy, but might overfit
-    lora_alpha = 16,  # Recommended alpha == r at least
-    lora_dropout = 0,
-    bias = "none",
-    random_state = 3407,
-    use_rslora = False,  # We support rank stabilized LoRA
-    loftq_config = None, # And LoftQ
-    # target_modules = "all-linear", # Optional now! Can specify a list if needed
-)
+        r = 16,           # The larger, the higher the accuracy, but might overfit
+        lora_alpha = 16,  # Recommended alpha == r at least
+        lora_dropout = 0,
+        bias = "none",
+        random_state = 3407,
+        use_rslora = False,  # We support rank stabilized LoRA
+        loftq_config = None, # And LoftQ
+        # target_modules = "all-linear", # Optional now! Can specify a list if needed
+    )
+else:
+    model.lm_head.requires_grad_(True)
+    model.model.layers.requires_grad_(True)
+    model.model.embed_tokens.requires_grad_(True)
+    # model.model.sam_model.requires_grad_(True)
+    # model.model.vision_model.requires_grad_(True)
+    # model.model.projector.requires_grad_(True)
+    model.model.norm.requires_grad_(True)
+    # model.model.image_newline.requires_grad_(True)
+    # model.model.view_seperator.requires_grad_(True)    
+# Check number of trainable parameters
+def count_parameters(model):
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    trainable_param_names = [name for name, param in model.named_parameters() if param.requires_grad]
+    return total_params, trainable_params, trainable_param_names
+
+
+
+if is_main_process:
+    total_params, trainable_params, trainable_param_names = count_parameters(model)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    non_trainable_params = total_params - trainable_params
+    print(f"Non-trainable parameters: {non_trainable_params:,}")
+    print(f"Trainable percentage: {100 * trainable_params / total_params:.2f}%")
+
+# Set requires_grad=True for specific model components
+
+# st()
+
 instruction = "<image>\nFree OCR. "
 
 def convert_to_conversation(sample):
@@ -410,60 +497,135 @@ def convert_to_conversation(sample):
 # dataset = dataset.rename_column("image_path", "image")
 # Load dataset using TextDataset
 from RAE.src.utils.basic_utils import TextDataset
-train_dataset = TextDataset(root="./", num_stories=1000)
-val_dataset = TextDataset(root="./", num_stories=100, eval_mode=True)  # Smaller validation set
+train_dataset = TextDataset(root="./", num_stories=500000, convert_to_conversation=True)
+val_dataset = TextDataset(root="./", num_stories=100, eval_mode=True, convert_to_conversation=True)  # Smaller validation set
 
-train_converted_dataset = [convert_to_conversation(sample) for sample in train_dataset]
-val_converted_dataset = [convert_to_conversation(sample) for sample in val_dataset]
+if is_main_process:
+    print("Converting train dataset to conversation format")
+import time
+start_time = time.time()
+# Check if converted dataset exists, if not create and save it
+import pickle
+import os
+
+
+
+# print(f"Time taken to convert train dataset to conversation format: {end_time - start_time} seconds")
+# print("Converting val dataset to conversation format")
+# val_converted_dataset = [convert_to_conversation(sample) for sample in val_dataset]
+# print(f"Train dataset length: {len(train_converted_dataset)}")
+# print(f"Val dataset length: {len(val_converted_dataset)}")
 # st()
 
 from transformers import Trainer, TrainingArguments
 from unsloth import is_bf16_supported
 FastVisionModel.for_training(model) # Enable for training!
+
+# Move model to GPU and wrap with DDP if distributed
+model = model.to(f'cuda:{local_rank}')
+if world_size > 1:
+    # For MoE models, we need find_unused_parameters=True because not all experts are used in every forward pass
+    # However, this can cause "ready twice" errors for shared experts that are always used
+    # We use broadcast_buffers=False to reduce synchronization overhead and potential conflicts
+    # gradient_as_bucket_view=True helps optimize gradient synchronization
+    model = DDP(
+        model, 
+        device_ids=[local_rank], 
+        output_device=local_rank, 
+        # find_unused_parameters=True,
+        # gradient_as_bucket_view=True,
+        # broadcast_buffers=False  # Helps avoid synchronization issues with MoE and shared experts
+    )
+    # NOTE: We cannot use _set_static_graph() with MoE models because:
+    # 1. MoE routing selects different experts each iteration, making the graph dynamic
+    # 2. Static graph requires the same parameters to receive gradients every iteration
+    # 3. This is fundamentally incompatible with MoE's dynamic expert selection
+    # Instead, we rely on find_unused_parameters=True to handle unused parameters correctly
+
 data_collator = DeepSeekOCRDataCollator(
     tokenizer=tokenizer,
-    model = model,
-    image_size=640,
-    base_size=1024,
+    model = model.module if world_size > 1 else model,  # Use .module for DDP wrapped model
+    # image_size=640,
+    # base_size=1024,
+    image_size=512,
+    base_size=512,    
     crop_mode=True,
     train_on_responses_only=True,
 )
 # st()
-wandb.init(project="dpsk-ocr-finetuning")
-experiment_name = wandb.run.name
+
+# Initialize wandb only on main process
+if is_main_process:
+    wandb.init(project="dpsk-ocr-finetuning")
+    experiment_name = wandb.run.name
+else:
+    experiment_name = "distributed_run"
+# experiment_name = "revived-totem-54"
 trainer = Trainer(
     model = model,
     tokenizer = tokenizer,
     data_collator = data_collator, # Must use!
-    train_dataset = train_converted_dataset,
-    eval_dataset = val_converted_dataset,
+    train_dataset = train_dataset,
+    eval_dataset = val_dataset,
     args = TrainingArguments(
-        per_device_train_batch_size = 2,
+        per_device_train_batch_size = 16,
         per_device_eval_batch_size = 1,
         gradient_accumulation_steps = 4,
-        warmup_steps = 5,
-        max_steps = 60,
-        # num_train_epochs = 1, # Set this instead of max_steps for full training runs
+        warmup_steps = 500,
+        # max_steps = 60,
+        
+        
+        num_train_epochs = 20, # Set this instead of max_steps for full training runs
         learning_rate = 2e-4,
         logging_steps = 1,
-        eval_steps = 10,
+        eval_steps = 500,
         eval_strategy = "steps",
-        save_steps = 10,
+        save_steps = 1000,
         save_strategy = "steps",
-        optim = "adamw_8bit",
+        save_total_limit=1,
+        # optim = "adamw_8bit",
         weight_decay = 0.001,
         lr_scheduler_type = "linear",
         seed = 3407,
         fp16 = not is_bf16_supported(),  # Use fp16 if bf16 is not supported
         bf16 = is_bf16_supported(),  # Use bf16 if supported
-        output_dir = f"outputs/{experiment_name}",
+        output_dir = f"/grogu/user/mprabhud/dpsk_ckpts/{experiment_name}",
         # report_to = "none",     # For Weights and Biases
         dataloader_num_workers=2,
-        report_to="wandb",
+        report_to="wandb" if is_main_process else "none",  # Only report to wandb on main process
+        gradient_checkpointing_kwargs={"use_reentrant": False}, # Example: explicitly set use_reentrant
+        # use_reentrant=False,
+        # Distributed training settings
+        # For MoE models, we need find_unused_parameters=True because not all experts are used in every forward pass
+        # This must match the DDP wrapper setting
+        # ddp_find_unused_parameters=True,
+        dataloader_pin_memory=False,  # Can help with distributed training
         # You MUST put the below items for vision finetuning:
         remove_unused_columns = False,
+        label_names = ["labels"],
     ),
 )
 
+# Load checkpoint if it exists
+checkpoint_path = f"/grogu/user/mprabhud/dpsk_ckpts/{experiment_name}"
+resume_from_checkpoint = None
+if os.path.exists(checkpoint_path):
+    # Find the latest checkpoint
+    checkpoints = [d for d in os.listdir(checkpoint_path) if d.startswith("checkpoint-")]
+    if checkpoints:
+        # Sort by checkpoint number
+        checkpoints.sort(key=lambda x: int(x.split("-")[1]))
+        latest_checkpoint = os.path.join(checkpoint_path, checkpoints[-1])
+        if is_main_process:
+            print(f"Found checkpoint: {latest_checkpoint}")
+        resume_from_checkpoint = latest_checkpoint
+
 # import ipdb; ipdb.set_trace()
-trainer.train()
+if experiment_name != "distributed_run" and resume_from_checkpoint:
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+else:
+    trainer.train()
+
+# Clean up distributed training
+if world_size > 1:
+    dist.destroy_process_group()

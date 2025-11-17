@@ -20,6 +20,6 @@ diffusion-data-constraint/megatron/fused_kernels/build_NVIDIA\ L40S/.ninja_deps
 diffusion-data-constraint/megatron/fused_kernels/*
 wandb/
 tinystories-gpt2/
-deepseek_ocr/
+# deepseek_ocr/
 unsloth_compiled_cache/
 outputs/
