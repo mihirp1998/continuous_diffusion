@@ -497,8 +497,10 @@ class DeepseekOCRModel(DeepseekV2Model):
                         global_features_2 = vision_model(image_ori, global_features_1) 
                         global_features = torch.cat((global_features_2[:, 1:], global_features_1.flatten(2).permute(0, 2, 1)), dim=-1) 
                         global_features = self.projector(global_features)
+                        # import ipdb; ipdb.set_trace()
                         if self.random_noise > 0:
-                            noise = self.random_noise * torch.randn_like(global_features)
+                            noise_sigma = self.random_noise * torch.rand((global_features.size(0),) + (1,) * (len(global_features.shape) - 1), device=global_features.device)
+                            noise = noise_sigma * torch.randn_like(global_features)
                             global_features = global_features + noise
                         
                         _, hw, n_dim = global_features.shape
@@ -735,7 +737,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
 
 
-    def infer(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False):
+    def infer(self, tokenizer, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False, max_new_tokens=8192):
         self.disable_torch_init()
 
         os.makedirs(output_path, exist_ok=True)
@@ -940,7 +942,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                 images_crop = torch.zeros((1, 3, base_size, base_size))
 
 
-
+        print("begin generating")
         if not eval_mode:
             streamer = NoEOSTextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=False)
             with torch.autocast("cuda", dtype=torch_dtype):
@@ -955,7 +957,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         temperature=0.0,
                         eos_token_id=tokenizer.eos_token_id,
                         streamer=streamer,
-                        max_new_tokens=8192,
+                        max_new_tokens=max_new_tokens,
                         no_repeat_ngram_size = 20,
                         use_cache = True
                         )
@@ -972,8 +974,8 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         # num_beams = 1,
                         temperature=0.0,
                         eos_token_id=tokenizer.eos_token_id,
-                        max_new_tokens=8192,
-                        no_repeat_ngram_size = 35,
+                        max_new_tokens=max_new_tokens,
+                        # no_repeat_ngram_size = 35,
                         use_cache = True
                         )
         

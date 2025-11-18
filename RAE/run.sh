@@ -9,4 +9,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=8 src/train.py --config /home/
 torchrun --standalone --nnodes=1 --nproc_per_node=1 src/train.py exps="[tiny,ocr]"
 
 
-torchrun --standalone --nproc_per_node=8 src/train_stage1.py --config configs/stage1/training/DINOv2-B_decXL.yaml --data-path /data/user_data/mprabhud/imagenet-mini --results-dir results/stage1 --image-size 256 --precision fp32
+torchrun --standalone --nproc_per_node=8 src/train_stage1.py exps="[tiny,ocr,debug]"
+
+
+torchrun --standalone --nnodes=1 --nproc_per_node=1 src/train.py 

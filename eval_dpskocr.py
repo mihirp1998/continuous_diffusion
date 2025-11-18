@@ -16,15 +16,51 @@ os.environ["UNSLOTH_WARN_UNINITIALIZED"] = '0'
 # from huggingface_hub import snapshot_download
 # snapshot_download("unsloth/DeepSeek-OCR", local_dir = "deepseek_ocr")
 # st()
-model, tokenizer = FastVisionModel.from_pretrained(
-    # "deepseek_ocr",
-    "outputs/robust-dust-7/checkpoint-60",
-    load_in_4bit = False, # Use 4bit to reduce memory use. False for 16bit LoRA.
-    auto_model = AutoModel,
-    trust_remote_code=True,
-    # unsloth_force_compile=True,
-    use_gradient_checkpointing = "unsloth", # True or "unsloth" for long context
-)
+# Load the model and handle DDP state dict keys
+import torch
+from collections import OrderedDict
+import ipdb; 
+st = ipdb.set_trace
+
+def load_model_from_ddp_checkpoint(checkpoint_path):
+    """Load model from DDP checkpoint by removing 'module.' prefix from state dict keys"""
+    model, tokenizer = FastVisionModel.from_pretrained(
+        "deepseek_ocr",  # Load base model first
+        load_in_4bit = False,
+        auto_model = AutoModel,
+        trust_remote_code=True,
+        random_noise=0.0,
+        use_gradient_checkpointing = "unsloth",
+    )    
+    # Load the checkpoint state dict
+    # Load the checkpoint using the safetensors files
+    from safetensors.torch import load_file
+    print("reading checkpoint shards")
+    # Load model shards
+    shard_1 = load_file(f"{checkpoint_path}/model-00001-of-00002.safetensors")
+    shard_2 = load_file(f"{checkpoint_path}/model-00002-of-00002.safetensors")
+    print("loaded checkpoint shards")
+    # Combine shards
+    checkpoint = {**shard_1, **shard_2}
+    
+    # Remove 'module.' prefix from DDP wrapped model keys
+    new_state_dict = OrderedDict()
+    for key, value in checkpoint.items():
+        if key.startswith('module.'):
+            new_key = key[7:]  # Remove 'module.' prefix
+            new_state_dict[new_key] = value
+        else:
+            new_state_dict[key] = value
+    
+    # Load the cleaned state dict
+    model.load_state_dict(new_state_dict, strict=True)
+    print("checkpoint loaded successfully")
+    
+    return model, tokenizer
+
+# model, tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckpts/pleasant-sound-101/checkpoint-3750")
+model, tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
+
 # st()
 FastVisionModel.for_inference(model) # Enable for inference!
 
@@ -36,13 +72,14 @@ image_file = '/home/mprabhud/phd_projects/continuous_diffusion/story_00000001.pn
 # Large: base_size = 1280, image_size = 1280, crop_mode = False
 
 # Gundam: base_size = 1024, image_size = 640, crop_mode = True
-
+print("inferring")
 res = model.infer(tokenizer, prompt=prompt, image_file=image_file,
     output_path = 'out/',
-    image_size=640,
-    base_size=1024,
+    image_size=512,
+    base_size=512,    
     crop_mode=True,
     eval_mode = True,
+    max_new_tokens=256,
     save_results = False,
     test_compress = False)
 print(res)
