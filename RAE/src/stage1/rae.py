@@ -97,6 +97,7 @@ class RAE(nn.Module):
         else:
             self.do_normalization = False
     def noising(self, x: torch.Tensor) -> torch.Tensor:
+        # st()
         noise_sigma = self.noise_tau * torch.rand((x.size(0),) + (1,) * (len(x.shape) - 1), device=x.device)
         noise = noise_sigma * torch.randn_like(x)
         return x + noise
