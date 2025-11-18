@@ -107,7 +107,6 @@ class RAE(nn.Module):
         _, _, h, w = x.shape
         if h != self.encoder_input_size or w != self.encoder_input_size:
             x = nn.functional.interpolate(x, size=(self.encoder_input_size, self.encoder_input_size), mode='bicubic', align_corners=False)
-        # st()
         if self.encoder_mean is not None and self.encoder_std is not None:
             # making it to be 0 mean and 1 std before passing to the encoder
             x = (x - self.encoder_mean.to(x.device)) / self.encoder_std.to(x.device)
