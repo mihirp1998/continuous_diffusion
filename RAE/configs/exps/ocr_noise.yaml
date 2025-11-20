@@ -1,7 +1,7 @@
 # @package _global_
 
 stage_1:
-  target: ocr
+  target: ocr-noise
 
 misc:
   latent_size: [1280, 8, 8] # [C, H, W]

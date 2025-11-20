@@ -383,7 +383,7 @@ def main(cfg: DictConfig):
     n = ys.size(0)
     zs = torch.randn(n, *latent_size, device=device, dtype=latent_dtype)
     
-    if rae_config.target == "ocr":
+    if rae_config.target == "ocr" or rae_config.target == "ocr-noise":
         ys = None
         deepseek_tokenizer = AutoTokenizer.from_pretrained("../DeepSeek-OCR-code", trust_remote_code=True)
 
@@ -424,7 +424,7 @@ def main(cfg: DictConfig):
             x = x.to(device)
             
             with torch.no_grad():
-                if rae_config.target == "ocr":
+                if rae_config.target == "ocr" or rae_config.target == "ocr-noise":
                     x = rae.get_image_features(x)
                     if cfg.precision == "fp32":
                         x = x.to(torch.float32)
@@ -537,7 +537,7 @@ def main(cfg: DictConfig):
                     if using_cfg:
                         samples, _ = samples.chunk(2, dim=0)
                     # st()
-                    if rae_config.target == "ocr":
+                    if rae_config.target == "ocr" or rae_config.target == "ocr-noise":
                         prompt = "<image>\n<|grounding|>Convert the document to markdown. "
                         decoded_text = []
                         
@@ -578,7 +578,7 @@ def main(cfg: DictConfig):
                         normal_samples_text = [text for process_texts in gathered_normal_text for text in process_texts]
                         single_normal_sample = normal_samples_text[0]
                         print(f"normal sample: {single_normal_sample}")
-
+                        st()
                         if cfg.wandb:
                             # Update persistent vis_table_dict with new samples
                             for i, text in enumerate(samples):

@@ -1,0 +1,28 @@
+# @package _global_
+
+# stage_1:
+#   target: ocr
+
+misc:
+  latent_size: [1280, 8, 8] # [C, H, W]
+
+stage_1:
+  target: stage1.RAE
+  params:
+    encoder_cls: 'DeepSeekOCR'
+    encoder_config_path: 'deepseek-ai/DeepSeek-OCR'
+    encoder_input_size: 512
+    decoder_patch_size: 64
+    encoder_params:
+      normalize: true
+    
+training:
+  weighted_l1: true
+  sample_every: 2500
+  gen_global_batch_size: 16
+
+stage_2:
+  params:
+    input_size: 8
+    in_channels: 1280    
+    y_embedder: false

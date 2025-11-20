@@ -344,7 +344,6 @@ class DiTwDDTHead(nn.Module):
 
     def forward(self, x, t, y, s=None, mask=None):
         # x = self.x_embedder(x) + self.pos_embed
-        # st()
 
         t = self.t_embedder(t)
         if y is not None:

@@ -29,9 +29,10 @@ def load_model_from_ddp_checkpoint(checkpoint_path):
         load_in_4bit = False,
         auto_model = AutoModel,
         trust_remote_code=True,
-        random_noise=0.0,
+        random_noise=0.5,
         use_gradient_checkpointing = "unsloth",
     )    
+    st()
     # Load the checkpoint state dict
     # Load the checkpoint using the safetensors files
     from safetensors.torch import load_file
@@ -77,7 +78,7 @@ res = model.infer(tokenizer, prompt=prompt, image_file=image_file,
     output_path = 'out/',
     image_size=512,
     base_size=512,    
-    crop_mode=True,
+    crop_mode=False,
     eval_mode = True,
     max_new_tokens=256,
     save_results = False,
