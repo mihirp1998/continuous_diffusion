@@ -1,0 +1,10 @@
+# @package _global_
+
+training:
+  num_examples: 1
+  gen_global_batch_size: 8
+  checkpoint_interval: -1
+  log_every: 10
+  epochs: 10000
+  global_batch_size: 8
+  batch_size: 8  

@@ -13,3 +13,5 @@ torchrun --standalone --nproc_per_node=8 src/train_stage1.py exps="[tiny,ocr,deb
 
 
 torchrun --standalone --nnodes=1 --nproc_per_node=1 src/train.py 
+
+torchrun --standalone --nnodes=1 --nproc_per_node=1 src/train.py exps="[tiny,ocr_noise,bigmodel,smallbs,x_pred]" precision=fp32 training.sample_every=1 training.gen_global_batch_size=1 ckpt=/grogu/user/mprabhud/ckpt_rae/still-music-56/checkpoints/0330000.pt

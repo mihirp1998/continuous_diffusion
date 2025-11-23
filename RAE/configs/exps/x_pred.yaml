@@ -1,0 +1,5 @@
+# @package _global_
+
+transport:
+  params:
+    prediction: 'x_pred'

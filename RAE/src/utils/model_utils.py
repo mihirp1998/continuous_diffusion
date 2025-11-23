@@ -26,26 +26,27 @@ def load_model_from_ddp_checkpoint(checkpoint_path):
     # st()
     # Load the checkpoint state dict
     # Load the checkpoint using the safetensors files
-    from safetensors.torch import load_file
-    print("reading checkpoint shards")
-    # Load model shards
-    shard_1 = load_file(f"{checkpoint_path}/model-00001-of-00002.safetensors")
-    shard_2 = load_file(f"{checkpoint_path}/model-00002-of-00002.safetensors")
-    print("loaded checkpoint shards")
-    # Combine shards
-    checkpoint = {**shard_1, **shard_2}
-    
-    # Remove 'module.' prefix from DDP wrapped model keys
-    new_state_dict = OrderedDict()
-    for key, value in checkpoint.items():
-        if key.startswith('module.'):
-            new_key = key[7:]  # Remove 'module.' prefix
-            new_state_dict[new_key] = value
-        else:
-            new_state_dict[key] = value
-    
-    # Load the cleaned state dict
-    model.load_state_dict(new_state_dict, strict=True)
+    if checkpoint_path is not None:
+        from safetensors.torch import load_file
+        print("reading checkpoint shards")
+        # Load model shards
+        shard_1 = load_file(f"{checkpoint_path}/model-00001-of-00002.safetensors")
+        shard_2 = load_file(f"{checkpoint_path}/model-00002-of-00002.safetensors")
+        print("loaded checkpoint shards")
+        # Combine shards
+        checkpoint = {**shard_1, **shard_2}
+        
+        # Remove 'module.' prefix from DDP wrapped model keys
+        new_state_dict = OrderedDict()
+        for key, value in checkpoint.items():
+            if key.startswith('module.'):
+                new_key = key[7:]  # Remove 'module.' prefix
+                new_state_dict[new_key] = value
+            else:
+                new_state_dict[key] = value
+        
+        # Load the cleaned state dict
+        model.load_state_dict(new_state_dict, strict=True)
     print("checkpoint loaded successfully")
     
     return model, tokenizer
@@ -61,8 +62,8 @@ def instantiate_from_config(config) -> object:
         raise KeyError("Expected key `target` to instantiate.")
     if config["target"] == "ocr-noise":
         model, tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
+        # model, tokenizer = load_model_from_ddp_checkpoint(None)
         FastVisionModel.for_inference(model) 
-        # st()
     elif config["target"] == "ocr":
         import torch
         model_name = "/home/mprabhud/phd_projects/continuous_diffusion/DeepSeek-OCR-code"  # Commented out to use HuggingFace model

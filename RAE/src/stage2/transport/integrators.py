@@ -4,6 +4,8 @@ import torch.nn as nn
 from torchdiffeq import odeint
 from functools import partial
 from tqdm import tqdm
+import ipdb
+st = ipdb.set_trace
 
 class sde:
     """SDE solver class"""
@@ -94,17 +96,18 @@ class ode:
         time_dist_shift,
     ):
         assert t0 < t1, "ODE sampler has to be in forward time"
-
+        # st()
         self.drift = drift
         # self.t = th.linspace(t0, t1, num_steps)
         self.t = 1 - th.linspace(t0, t1, num_steps)
+        # st()
         self.t = time_dist_shift * self.t / (1 + (time_dist_shift - 1) * self.t)
         self.atol = atol
         self.rtol = rtol
         self.sampler_type = sampler_type
 
     def sample(self, x, model, **model_kwargs) -> tuple[th.Tensor]:
-        
+        # st()
         device = x[0].device if isinstance(x, tuple) else x.device
         def _fn(t, x):
             t = th.ones(x[0].size(0)).to(device) * t if isinstance(x, tuple) else th.ones(x.size(0)).to(device) * t

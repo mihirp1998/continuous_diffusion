@@ -18,6 +18,7 @@ class ModelType(enum.Enum):
     NOISE = enum.auto()  # the model predicts epsilon
     SCORE = enum.auto()  # the model predicts \nabla \log p(x)
     VELOCITY = enum.auto()  # the model predicts v(x)
+    X_PRED = enum.auto()  # the model predicts x(t)
 
 class PathType(enum.Enum):
     """
@@ -27,6 +28,7 @@ class PathType(enum.Enum):
     LINEAR = enum.auto()
     GVP = enum.auto()
     VP = enum.auto()
+    
 
 class WeightType(enum.Enum):
     """
@@ -36,6 +38,7 @@ class WeightType(enum.Enum):
     NONE = enum.auto()
     VELOCITY = enum.auto()
     LIKELIHOOD = enum.auto()
+    X_PRED = enum.auto()
 
 
 def truncated_logitnormal_sample(
@@ -106,6 +109,7 @@ class Transport:
 
         self.loss_type = loss_type
         self.model_type = model_type
+        # st()
         self.time_dist_type = time_dist_type
         self.time_dist_shift = time_dist_shift
         assert self.time_dist_shift >= 1.0, "time distribution shift must be >= 1.0."
@@ -150,7 +154,7 @@ class Transport:
         
         if reverse:
             t0, t1 = 1 - t0, 1 - t1
-
+        # st()
         return t0, t1
 
 
@@ -203,10 +207,20 @@ class Transport:
         model_output = model(xt, t, **model_kwargs)
         B, *_, C = xt.shape
         assert model_output.size() == (B, *xt.size()[1:-1], C)
+        
+        # get v
+        
+        # st()
 
         terms = {}
         terms['pred'] = model_output
-        if self.model_type == ModelType.VELOCITY:
+        if self.model_type == ModelType.X_PRED:
+            if self.loss_type in [WeightType.X_PRED]:
+                terms['loss'] = mean_flat(((model_output - x1) ** 2))
+            else:
+                pred_velocity = (xt - model_output)/ (1-t).reshape(-1, 1, 1, 1)
+                terms['loss'] = mean_flat(((pred_velocity - ut) ** 2))
+        elif self.model_type == ModelType.VELOCITY:
             terms['loss'] = mean_flat(((model_output - ut) ** 2))
         else: 
             _, drift_var = self.path_sampler.compute_drift(xt, t)
@@ -247,11 +261,23 @@ class Transport:
         def velocity_ode(x, t, model, **model_kwargs):
             model_output = model(x, t, **model_kwargs)
             return model_output
+        
+        def x_pred_ode(x, t, model, **model_kwargs):
+            x_orig = model_kwargs.pop('x_orig', None)
+            # st()
+            if x_orig is not None:
+                x_output = x_orig
+            else:
+                x_output = model(x, t, **model_kwargs)
+            pred_velocity = (x - x_output)/ (1-t).reshape(-1, 1, 1, 1)
+            return pred_velocity        
 
         if self.model_type == ModelType.NOISE:
             drift_fn = noise_ode
         elif self.model_type == ModelType.SCORE:
             drift_fn = score_ode
+        elif self.model_type == ModelType.X_PRED:
+            drift_fn = x_pred_ode
         else:
             drift_fn = velocity_ode
         
@@ -274,6 +300,9 @@ class Transport:
             score_fn = lambda x, t, model, **kwagrs: model(x, t, **kwagrs)
         elif self.model_type == ModelType.VELOCITY:
             score_fn = lambda x, t, model, **kwargs: self.path_sampler.get_score_from_velocity(model(x, t, **kwargs), x, t)
+        elif self.model_type == ModelType.X_PRED:
+            pred_velocity =  lambda x, t, model, **kwargs: (model(x, t, **kwargs) - x) / (1-t).reshape(-1, 1, 1, 1)
+            score_fn = lambda x, t, model, **kwargs: self.path_sampler.get_score_from_velocity(pred_velocity(x, t, model, **kwargs), x, t)
         else:
             raise NotImplementedError()
         
@@ -427,6 +456,7 @@ class Sampler:
         - rtol: relative error tolerance for the solver
         - reverse: whether solving the ODE in reverse (data to noise); default to False
         """
+        # st()
         if reverse:
             drift = lambda x, t, model, **kwargs: self.drift(x, th.ones_like(t) * (1 - t), model, **kwargs)
         else:

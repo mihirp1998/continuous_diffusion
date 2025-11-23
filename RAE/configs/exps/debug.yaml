@@ -1,11 +1,11 @@
 # @package _global_
-use_model_forward: true
+# use_model_forward: true
 
 training:
   epochs: 10000
-  global_batch_size: 8
+  global_batch_size: 16
   batch_size: 8
-  sample_every: 10
+  sample_every: 100
   num_examples: 1
   gen_global_batch_size: 8
   checkpoint_interval: -1

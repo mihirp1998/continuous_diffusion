@@ -348,6 +348,7 @@ def main(cfg: DictConfig):
     if rank == 0:
         logger.info(f"Training configured for {epochs} epochs, {steps_per_epoch} steps per epoch.")
         logger.info(opt_msg + "\n" + sched_msg)
+
     transport = create_transport(
         **transport_params,
         time_dist_shift=time_dist_shift,
@@ -529,6 +530,7 @@ def main(cfg: DictConfig):
                 logger.info("Generating EMA samples...")
                 with torch.no_grad():
                     with autocast(**autocast_kwargs):
+                        # samples = eval_sampler(zs, model_fn,x_orig=x[:1], **sample_model_kwargs)[-1]
                         samples = eval_sampler(zs, model_fn, **sample_model_kwargs)[-1]
                         normal_samples = eval_sampler(zs, normal_fn, **sample_model_kwargs)[-1]
                        
@@ -539,13 +541,17 @@ def main(cfg: DictConfig):
                     # st()
                     if rae_config.target == "ocr" or rae_config.target == "ocr-noise":
                         prompt = "<image>\n<|grounding|>Convert the document to markdown. "
+                        prompt = "<image>\nFree OCR. "
                         decoded_text = []
                         
                         samples = samples.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
                         normal_samples = normal_samples.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
                         input_sample = x.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
-                        input_text =  rae.infer(deepseek_tokenizer,image_features=[input_sample[0].unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+                        # TODO remove this later
+                        # input_sample = input_sample + torch.randn_like(input_sample) * 0.5
+                        input_text =  rae.infer(deepseek_tokenizer,image_features=[input_sample[0].unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, max_new_tokens=256)
                         print(f"input sample: {input_text}")
+                        # st()
                         mse_difference = torch.nn.functional.mse_loss(input_sample[0], samples[0])
                         print(f"mse difference: {mse_difference}")
                         if cfg.wandb:
@@ -556,13 +562,13 @@ def main(cfg: DictConfig):
                         
                         # Process generated samples
                         for sample in samples:
-                            res_text =  rae.infer(deepseek_tokenizer,image_features=[sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+                            res_text =  rae.infer(deepseek_tokenizer,image_features=[sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, max_new_tokens=256)
                             decoded_text.append(res_text)
                         
                         # Process normal samples
                         normal_decoded_text = []
                         for normal_sample in normal_samples:
-                            normal_res_text = rae.infer(deepseek_tokenizer,image_features=[normal_sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+                            normal_res_text = rae.infer(deepseek_tokenizer,image_features=[normal_sample.unsqueeze(0)], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, max_new_tokens=256)
                             normal_decoded_text.append(normal_res_text)
                         
                         # Gather text from all processes
@@ -578,7 +584,7 @@ def main(cfg: DictConfig):
                         normal_samples_text = [text for process_texts in gathered_normal_text for text in process_texts]
                         single_normal_sample = normal_samples_text[0]
                         print(f"normal sample: {single_normal_sample}")
-                        st()
+                        # st()
                         if cfg.wandb:
                             # Update persistent vis_table_dict with new samples
                             for i, text in enumerate(samples):

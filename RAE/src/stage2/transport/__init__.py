@@ -1,5 +1,6 @@
 from .transport import Transport, ModelType, WeightType, PathType, Sampler
-
+import ipdb
+st = ipdb.set_trace
 def create_transport(
     path_type='Linear',
     prediction="velocity",
@@ -27,6 +28,8 @@ def create_transport(
         model_type = ModelType.NOISE
     elif prediction == "score":
         model_type = ModelType.SCORE
+    elif prediction == "x_pred":
+        model_type = ModelType.X_PRED
     else:
         model_type = ModelType.VELOCITY
 
@@ -34,6 +37,8 @@ def create_transport(
         loss_type = WeightType.VELOCITY
     elif loss_weight == "likelihood":
         loss_type = WeightType.LIKELIHOOD
+    elif loss_weight == "x_pred":
+        loss_type = WeightType.X_PRED
     else:
         loss_type = WeightType.NONE
 
@@ -44,17 +49,18 @@ def create_transport(
     }
 
     path_type = path_choice[path_type]
+    
 
     if (path_type in [PathType.VP]):
         train_eps = 1e-5 if train_eps is None else train_eps
         sample_eps = 1e-3 if train_eps is None else sample_eps
     elif (path_type in [PathType.GVP, PathType.LINEAR] and model_type != ModelType.VELOCITY):
         train_eps = 1e-3 if train_eps is None else train_eps
-        sample_eps = 1e-3 if train_eps is None else sample_eps
+        sample_eps = 1e-3 if sample_eps is None else sample_eps
     else: # velocity & [GVP, LINEAR] is stable everywhere
         train_eps = 0
         sample_eps = 0
-    
+    # st()
     # create flow state
     state = Transport(
         model_type=model_type,

@@ -1,5 +1,6 @@
 apex
 RAE/models
+JiT/src
 *.pth
 *.pt
 *.pyc

@@ -431,7 +431,7 @@ class DeepseekOCRModel(DeepseekV2Model):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         images_seq_mask: Optional[torch.FloatTensor] = None,
-        images_features: Optional[torch.FloatTensor] = None,
+        image_features: Optional[torch.FloatTensor] = None,
         images_spatial_crop: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
@@ -451,13 +451,13 @@ class DeepseekOCRModel(DeepseekV2Model):
 
 
 
-        if (sam_model is not None and (input_ids.shape[1] != 1 or self.training) and (torch.sum(images[0][1]).item() != 0 or images_features is not None)) :
+        if (sam_model is not None and (input_ids.shape[1] != 1 or self.training) and (torch.sum(images[0][1]).item() != 0 or image_features is not None)) :
 
             idx = 0
             
             # sam_model = torch.jit.script(sam_model)
-            if images_features is not None:
-                all_image_features = images_features
+            if image_features is not None:
+                all_image_features = image_features
                 all_global_local_features = []
                 for image_feature in all_image_features:
                     
@@ -620,6 +620,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         images_seq_mask: Optional[torch.FloatTensor] = None,
+        image_features: Optional[torch.FloatTensor] = None,
         images_spatial_crop: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
         
@@ -646,6 +647,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             output_hidden_states=output_hidden_states,
             images=images,
             images_seq_mask = images_seq_mask,
+            image_features = image_features,
             images_spatial_crop = images_spatial_crop,
             return_dict=return_dict
             
@@ -703,6 +705,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
     ):
         # Omit tokens covered by past_key_values
+        # st()
         past_length = 0
         if past_key_values is not None:
             if isinstance(past_key_values, Cache):
@@ -760,7 +763,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             model_inputs = {"inputs_embeds": inputs_embeds}
         else:
             model_inputs = {"input_ids": input_ids}
-
+        # st()
         model_inputs.update(
             {
                 "position_ids": position_ids,
@@ -770,7 +773,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                 "images": kwargs.get("images", None),
                 "images_seq_mask": kwargs.get("images_seq_mask", None),
                 "images_spatial_crop": kwargs.get("images_spatial_crop", None),
-                "images_features": kwargs.get("images_features", None)            
+                "image_features": kwargs.get("image_features", None)            
             }
         )
         return model_inputs
@@ -797,9 +800,9 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
 
     def infer(self, tokenizer, image_features=None, prompt='', image_file='', output_path = '', base_size=1024, image_size=640, crop_mode=True, test_compress=False, save_results=False, eval_mode=False, max_new_tokens=8192):
         self.disable_torch_init()
-
-        os.makedirs(output_path, exist_ok=True)
-        os.makedirs(f'{output_path}/images', exist_ok=True)
+        if output_path != '':
+            os.makedirs(output_path, exist_ok=True)
+            os.makedirs(f'{output_path}/images', exist_ok=True)
 
         if prompt and image_file:
             conversation = [
@@ -1022,7 +1025,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         images=[(images_crop.cuda(), images_ori.cuda())],
                         images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
                         images_spatial_crop = images_spatial_crop,
-                        images_features = image_features,
+                        image_features = image_features,
                         # do_sample=False,
                         # num_beams = 1,
                         temperature=0.0,
@@ -1041,7 +1044,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         images=[(images_crop.cuda(), images_ori.cuda())],
                         images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
                         images_spatial_crop = images_spatial_crop,
-                        images_features = image_features,
+                        image_features = image_features,
                         # do_sample=False,
                         # num_beams = 1,
                         temperature=0.0,
