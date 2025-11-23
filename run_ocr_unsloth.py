@@ -35,28 +35,29 @@ def load_model_from_ddp_checkpoint(checkpoint_path):
     # st()
     # Load the checkpoint state dict
     # Load the checkpoint using the safetensors files
-    from safetensors.torch import load_file
-    print("reading checkpoint shards")
-    # Load model shards
-    shard_1 = load_file(f"{checkpoint_path}/model-00001-of-00002.safetensors")
-    shard_2 = load_file(f"{checkpoint_path}/model-00002-of-00002.safetensors")
-    print("loaded checkpoint shards")
-    # Combine shards
-    checkpoint = {**shard_1, **shard_2}
-    
-    # Remove 'module.' prefix from DDP wrapped model keys
-    new_state_dict = OrderedDict()
-    for key, value in checkpoint.items():
-        if key.startswith('module.'):
-            new_key = key[7:]  # Remove 'module.' prefix
-            new_state_dict[new_key] = value
-        else:
-            new_state_dict[key] = value
-    
-    # Load the cleaned state dict
-    model.load_state_dict(new_state_dict, strict=True)
-    print("checkpoint loaded successfully")
-    
+    if checkpoint_path is not None:
+        from safetensors.torch import load_file
+        print("reading checkpoint shards")
+        # Load model shards
+        shard_1 = load_file(f"{checkpoint_path}/model-00001-of-00002.safetensors")
+        shard_2 = load_file(f"{checkpoint_path}/model-00002-of-00002.safetensors")
+        print("loaded checkpoint shards")
+        # Combine shards
+        checkpoint = {**shard_1, **shard_2}
+        
+        # Remove 'module.' prefix from DDP wrapped model keys
+        new_state_dict = OrderedDict()
+        for key, value in checkpoint.items():
+            if key.startswith('module.'):
+                new_key = key[7:]  # Remove 'module.' prefix
+                new_state_dict[new_key] = value
+            else:
+                new_state_dict[key] = value
+        
+        # Load the cleaned state dict
+        model.load_state_dict(new_state_dict, strict=True)
+        print("checkpoint loaded successfully")
+        
     return model, tokenizer
 
 
@@ -67,6 +68,7 @@ def load_model_from_ddp_checkpoint(checkpoint_path):
 # base_size = 512, image_size = 512, crop_mode = False
 
 model, tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
+# model, tokenizer = load_model_from_ddp_checkpoint(None)
 # st()
 FastVisionModel.for_inference(model) # Enable for inference!
 
@@ -100,18 +102,20 @@ else:
 
 # res = model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
 res = model.get_image_features(image_tensor.cuda())
-st()
+# st()
 # res = model.get_image_features(tokenizer, prompt=prompt, image_tensor=image_tensor, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
-# res[0] = res[0] + torch.randn_like(res[0]) *0.1
+res[0] = res[0] + torch.randn_like(res[0]) *0.5
+
+res_text =  model.infer(tokenizer,image_features=[res[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
 # st()
 # res = model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
 # res_text =  model.infer(tokenizer,image_features=[res[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
 # res =model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 1024, image_size = 640, crop_mode=True, eval_mode = True)
 
 # res_text =  model.generate_text([res[:1]], tokenizer)
-# print(res_text)
-res_text = "Hello, world!"
+print(res_text)
+# res_text = "Hello, world!"
+# # st()
+# compute_loss =  model.compute_loss([res[:1]], tokenizer, res_text)
 # st()
-compute_loss =  model.compute_loss([res[:1]], tokenizer, res_text)
-st()
 
