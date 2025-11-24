@@ -1,0 +1,28 @@
+# @package _global_
+
+# stage_1:
+#   target: ocr-noise
+
+global_seed: 2
+dataset: tiny
+use_features: true
+encoder: ocr-noise
+txt_modeling: true
+online_eval: false
+img_size: 8
+in_channels: 1280
+model: 'JiT-E'
+# guidance:
+#   scale: 0.0
+
+# misc:
+#   latent_size: [1280, 8, 8] # [C, H, W]
+# training:
+#   sample_every: 2500
+#   gen_global_batch_size: 16
+
+# stage_2:
+#   params:
+#     input_size: 8
+#     in_channels: 1280    
+#     y_embedder: false

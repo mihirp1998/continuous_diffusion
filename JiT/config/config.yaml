@@ -1,0 +1,72 @@
+defaults:
+  - _self_
+  - /exps: []
+
+# architecture
+model: 'JiT-B/16'
+img_size: 256
+attn_dropout: 0.0
+proj_dropout: 0.0
+
+dataset: imagenet
+use_features: false
+
+# training
+epochs: 600
+warmup_epochs: 5
+batch_size: 128
+lr: null
+blr: 5e-5
+min_lr: 0.0
+lr_schedule: 'constant'
+weight_decay: 0.0
+ema_decay1: 0.9999
+ema_decay2: 0.9996
+P_mean: -0.8
+P_std: 0.8
+noise_scale: 1.0
+t_eps: 5e-2
+label_drop_prob: 0.1
+
+seed: 0
+start_epoch: 0
+num_workers: 12
+pin_mem: true
+encoder: null
+
+training:
+  num_examples: 500000
+
+# sampling
+sampling_method: 'heun'
+num_sampling_steps: 50
+cfg: 2.9
+interval_min: 0.1
+interval_max: 1.0
+num_images: 50000
+eval_freq: 40
+online_eval: true
+eval_ema: true
+evaluate_gen: false
+gen_bsz: 128
+in_channels: 3
+# dataset
+# data_path: './data/imagenet'
+class_num: 1000
+
+# checkpointing
+# output_dir: './output_dir'
+resume: ''
+save_last_freq: 5
+log_freq: 100
+device: 'cuda'
+
+# distributed training
+world_size: 1
+local_rank: -1
+dist_on_itp: false
+dist_url: 'env://'
+data_path: ${oc.env:DATA_DIR}
+txt_modeling: false
+output_dir: /grogu/user/mprabhud/jit_ckpt
+# resume: /grogu/user/mprabhud/jit_ckpt

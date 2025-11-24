@@ -12,13 +12,14 @@ class Denoiser(nn.Module):
         super().__init__()
         self.net = JiT_models[args.model](
             input_size=args.img_size,
-            in_channels=3,
+            in_channels=args.in_channels,
             num_classes=args.class_num,
             attn_drop=args.attn_dropout,
-            proj_drop=args.proj_dropout,
+            proj_drop=args.proj_dropout
         )
         self.img_size = args.img_size
         self.num_classes = args.class_num
+        self.args = args
 
         self.label_drop_prob = args.label_drop_prob
         self.P_mean = args.P_mean
@@ -48,8 +49,12 @@ class Denoiser(nn.Module):
         return torch.sigmoid(z)
 
     def forward(self, x, labels):
-        labels_dropped = self.drop_labels(labels) if self.training else labels
-
+        
+        if labels is not None:
+            labels_dropped = self.drop_labels(labels) if self.training else labels
+        else:
+            labels_dropped = None
+        # st()
         t = self.sample_t(x.size(0), device=x.device).view(-1, *([1] * (x.ndim - 1)))
         e = torch.randn_like(x) * self.noise_scale
 
@@ -58,7 +63,7 @@ class Denoiser(nn.Module):
         # st()
 
         x_pred = self.net(z, t.flatten(), labels_dropped)
-        st()
+        # st()
         v_pred = (x_pred - z) / (1 - t).clamp_min(self.t_eps)
 
         # l2 loss
@@ -68,10 +73,11 @@ class Denoiser(nn.Module):
         return loss
 
     @torch.no_grad()
-    def generate(self, labels):
-        device = labels.device
-        bsz = labels.size(0)
-        z = self.noise_scale * torch.randn(bsz, 3, self.img_size, self.img_size, device=device)
+    def generate(self, labels, batch_size=64, device=None):
+        device = labels.device if device is None else device
+        bsz = batch_size
+        
+        z = self.noise_scale * torch.randn(bsz, self.args.in_channels, self.img_size, self.img_size, device=device)
         timesteps = torch.linspace(0.0, 1.0, self.steps+1, device=device).view(-1, *([1] * z.ndim)).expand(-1, bsz, -1, -1, -1)
 
         if self.method == "euler":
@@ -85,16 +91,23 @@ class Denoiser(nn.Module):
         for i in range(self.steps - 1):
             t = timesteps[i]
             t_next = timesteps[i + 1]
+            # 
             z = stepper(z, t, t_next, labels)
+            # st()
         # last step euler
+        # st()
         z = self._euler_step(z, timesteps[-2], timesteps[-1], labels)
         return z
 
     @torch.no_grad()
     def _forward_sample(self, z, t, labels):
+        # st()
         # conditional
         x_cond = self.net(z, t.flatten(), labels)
         v_cond = (x_cond - z) / (1.0 - t).clamp_min(self.t_eps)
+        
+        if labels is None:
+            return v_cond
 
         # unconditional
         x_uncond = self.net(z, t.flatten(), torch.full_like(labels, self.num_classes))

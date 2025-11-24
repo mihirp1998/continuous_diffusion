@@ -8,7 +8,8 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from util.model_util import VisionRotaryEmbeddingFast, get_2d_sincos_pos_embed, RMSNorm
-
+import ipdb 
+st = ipdb.set_trace
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -220,7 +221,8 @@ class JiT(nn.Module):
         num_classes=1000,
         bottleneck_dim=128,
         in_context_len=32,
-        in_context_start=8
+        in_context_start=8,
+        txt_modeling=False
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -235,7 +237,10 @@ class JiT(nn.Module):
 
         # time and class embed
         self.t_embedder = TimestepEmbedder(hidden_size)
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size)
+        if not txt_modeling:
+            self.y_embedder = LabelEmbedder(num_classes, hidden_size)
+        else:
+            self.y_embedder = None
 
         # linear embed
         self.x_embedder = BottleneckPatchEmbed(input_size, patch_size, in_channels, bottleneck_dim, hidden_size, bias=True)
@@ -297,7 +302,8 @@ class JiT(nn.Module):
         nn.init.constant_(self.x_embedder.proj2.bias, 0)
 
         # Initialize label embedding table:
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+        if self.y_embedder is not None:
+            nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
@@ -334,10 +340,15 @@ class JiT(nn.Module):
         t: (N,)
         y: (N,)
         """
+        # st()
         # class and time embeddings
         t_emb = self.t_embedder(t)
-        y_emb = self.y_embedder(y)
-        c = t_emb + y_emb
+        if y is not None:
+            y_emb = self.y_embedder(y)
+            c = t_emb + y_emb
+        else:
+            y_emb = None
+            c = t_emb
 
         # forward JiT
         x = self.x_embedder(x)
@@ -383,6 +394,10 @@ def JiT_H_32(**kwargs):
     return JiT(depth=32, hidden_size=1280, num_heads=16,
                bottleneck_dim=256, in_context_len=32, in_context_start=10, patch_size=32, **kwargs)
 
+def JiT_E(**kwargs):
+    return JiT(depth=32, hidden_size=1280, num_heads=16,
+               bottleneck_dim=256, in_context_len=0, in_context_start=10, patch_size=1, txt_modeling=True, **kwargs)
+
 
 JiT_models = {
     'JiT-B/16': JiT_B_16,
@@ -391,4 +406,5 @@ JiT_models = {
     'JiT-L/32': JiT_L_32,
     'JiT-H/16': JiT_H_16,
     'JiT-H/32': JiT_H_32,
+    'JiT-E': JiT_E,
 }
