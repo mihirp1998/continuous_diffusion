@@ -68,5 +68,5 @@ dist_on_itp: false
 dist_url: 'env://'
 data_path: ${oc.env:DATA_DIR}
 txt_modeling: false
-output_dir: /grogu/user/mprabhud/jit_ckpt
+output_dir: ${oc.env:JIT_OUT_DIR}
 # resume: /grogu/user/mprabhud/jit_ckpt

@@ -7,7 +7,7 @@ import ipdb
 st = ipdb.set_trace
 from pathlib import Path
 import sys
-sys.path.append("/home/mprabhud/phd_projects/continuous_diffusion/RAE/src")
+sys.path.append("../RAE/src")
 from utils.basic_utils import create_text_image, TextDataset
 from utils.model_utils import load_model_from_ddp_checkpoint
 from unsloth import FastVisionModel
@@ -96,7 +96,8 @@ def main(cfg: DictConfig):
     
     if args.encoder == "ocr-noise":
         print("Loading OCR noise encoder")
-        encoder_model, encoder_tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
+        ckpt_dir = os.environ['CKPT_DIR']
+        encoder_model, encoder_tokenizer = load_model_from_ddp_checkpoint(f"{ckpt_dir}/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
         encoder_model.to(device)
         FastVisionModel.for_inference(encoder_model)         
         encoder = encoder_model
