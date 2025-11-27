@@ -398,6 +398,9 @@ def JiT_E(**kwargs):
     return JiT(depth=32, hidden_size=1280, num_heads=16,
                bottleneck_dim=256, in_context_len=0, in_context_start=10, patch_size=1, txt_modeling=True, **kwargs)
 
+def JiT_E_nb(**kwargs):
+    return JiT(depth=32, hidden_size=1280, num_heads=16,
+               bottleneck_dim=1280, in_context_len=0, in_context_start=10, patch_size=1, txt_modeling=True, **kwargs)
 
 JiT_models = {
     'JiT-B/16': JiT_B_16,
@@ -407,4 +410,5 @@ JiT_models = {
     'JiT-H/16': JiT_H_16,
     'JiT-H/32': JiT_H_32,
     'JiT-E': JiT_E,
+    'JiT-E-nb': JiT_E_nb,
 }
