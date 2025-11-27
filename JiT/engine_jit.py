@@ -82,7 +82,7 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
     return x
 
 
-def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, device=None, encoder=None, encoder_tokenizer=None, input_images=None):
+def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, device=None, encoder=None, encoder_tokenizer=None, input_images=None, eval_model=None, eval_tokenizer=None):
     # st()
     model_without_ddp.eval()
     world_size = misc.get_world_size()
@@ -123,6 +123,7 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
         class_label_gen_world = np.arange(0, class_num).repeat(args.num_images // class_num)
         class_label_gen_world = np.hstack([class_label_gen_world, np.zeros(50000)])
     # st()
+    all_perplexities = []
     for i in range(num_steps):
         print("Generation step {}/{}".format(i, num_steps))
 
@@ -144,6 +145,13 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
             sampled_images = sampled_images.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
             # sampled_images = input_images.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
             out_text = encoder.infer(encoder_tokenizer,image_features=[sampled_images[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True,  max_new_tokens=256)
+            if eval_model is not None:
+                eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=1024).to(device)
+                eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
+                loss = eval_outputs.loss
+                perplexity = torch.exp(loss).item()
+                all_perplexities.append(perplexity)
+                print("perplexity: ", perplexity)
             print("generated text: ", out_text)
             # st()
         else:
@@ -162,6 +170,10 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
                 cv2.imwrite(os.path.join(save_folder, '{}.png'.format(str(img_id).zfill(5))), gen_img)
 
     torch.distributed.barrier()
+
+    if eval_model is not None:
+        print("Average perplexity: ", np.mean(all_perplexities), "Std: ", np.std(all_perplexities))
+        
 
     # back to no ema
     print("Switch back from ema")

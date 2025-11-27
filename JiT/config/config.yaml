@@ -47,6 +47,7 @@ num_images: 50000
 eval_freq: 40
 online_eval: true
 eval_ema: true
+do_gen_perplexity: false
 evaluate_gen: false
 gen_bsz: 128
 in_channels: 3
