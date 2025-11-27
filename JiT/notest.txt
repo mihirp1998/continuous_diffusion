@@ -1,0 +1,9 @@
+rchrun --nnodes=2 --nproc-per-node=1 --node-rank=1   --master-addr=10.142.1
+.1 --master-port=29500   /workspace/search-dev/run_search.py   -c /workspace/search-dev/cfgs/search/bw5_vercl
+ip_sr1p_dstep20_cat.yaml --no_wandb
+
+50steps:
+[05:39:08.520883] Average perplexity:  54.210576042799694 Std:  29.69812581732224
+
+100 steps: 
+[07:55:41.699789] Average perplexity:  53.921170610296144 Std:  29.30875575191878

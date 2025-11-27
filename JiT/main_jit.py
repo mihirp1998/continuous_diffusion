@@ -7,7 +7,7 @@ import ipdb
 st = ipdb.set_trace
 from pathlib import Path
 import sys
-sys.path.append("/home/mprabhud/phd_projects/continuous_diffusion/RAE/src")
+sys.path.append("../RAE/src")
 from utils.basic_utils import create_text_image, TextDataset
 from utils.model_utils import load_model_from_ddp_checkpoint
 from unsloth import FastVisionModel
@@ -16,7 +16,7 @@ import torch.backends.cudnn as cudnn
 import wandb
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-
+from transformers import GPT2Config, GPT2LMHeadModel, AutoTokenizer
 from util.crop import center_crop_arr
 import util.misc as misc
 
@@ -96,7 +96,8 @@ def main(cfg: DictConfig):
     
     if args.encoder == "ocr-noise":
         print("Loading OCR noise encoder")
-        encoder_model, encoder_tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
+        ckpt_dir = os.environ['CKPT_DIR']
+        encoder_model, encoder_tokenizer = load_model_from_ddp_checkpoint(f"{ckpt_dir}/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
         encoder_model.to(device)
         FastVisionModel.for_inference(encoder_model)         
         encoder = encoder_model
@@ -125,6 +126,14 @@ def main(cfg: DictConfig):
     print("Base lr: {:.2e}".format(args.lr * 256 / eff_batch_size))
     print("Actual lr: {:.2e}".format(args.lr))
     print("Effective batch size: %d" % eff_batch_size)
+    
+    if args.do_gen_perplexity:
+        print("Loading GPT-2 model for perplexity evaluation")
+        eval_model = GPT2LMHeadModel.from_pretrained("gpt2")
+        eval_tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        eval_tokenizer.pad_token = eval_tokenizer.eos_token
+        eval_model.eval().to(device)
+
 
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
     model_without_ddp = model.module
@@ -133,7 +142,7 @@ def main(cfg: DictConfig):
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     print(optimizer)
-
+    # st()
     # Resume from checkpoint if provided
     checkpoint_path = os.path.join(args.resume, "checkpoint-last.pth") if args.resume else None
     if checkpoint_path and os.path.exists(checkpoint_path):
@@ -162,7 +171,7 @@ def main(cfg: DictConfig):
         with torch.random.fork_rng():
             torch.manual_seed(seed)
             with torch.no_grad():
-                evaluate(model_without_ddp, args, 0, batch_size=args.gen_bsz, log_writer=log_writer, device=device, encoder=encoder, encoder_tokenizer=encoder_tokenizer)
+                evaluate(model_without_ddp, args, 0, batch_size=args.gen_bsz, log_writer=log_writer, device=device, encoder=encoder, encoder_tokenizer=encoder_tokenizer, eval_model=eval_model, eval_tokenizer=eval_tokenizer)
         return
 
     # Training loop

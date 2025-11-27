@@ -23,3 +23,6 @@ torchrun --nproc_per_node=8 --nnodes=1 main_jit.py exps=ocr_noise
 # --gen_bsz 128 --num_images 50000 --cfg 2.9 --interval_min 0.1 --interval_max 1.0 \
 # --output_dir /grogu/user/mprabhud/jit_ckpt --resume /grogu/user/mprabhud/jit_ckpt \
 # --data_path /grogu/datasets/imagenet --online_eval
+
+
+torchrun --nproc_per_node=1 --nnodes=1 main_jit.py exps=ocr_noise resume=../../jit_ckpt/ evaluate_gen=True do_gen_perplexity=True num_sampling_steps=100

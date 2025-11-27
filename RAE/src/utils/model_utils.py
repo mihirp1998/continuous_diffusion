@@ -15,8 +15,9 @@ def load_model_from_ddp_checkpoint(checkpoint_path):
     import os
     from collections import OrderedDict
     os.environ["UNSLOTH_WARN_UNINITIALIZED"] = '0'
+    # st()
     model, tokenizer = FastVisionModel.from_pretrained(
-        "/home/mprabhud/phd_projects/continuous_diffusion//deepseek_ocr",  # Load base model first
+        "../deepseek_ocr",  # Load base model first
         load_in_4bit = False,
         auto_model = AutoModel,
         trust_remote_code=True,
