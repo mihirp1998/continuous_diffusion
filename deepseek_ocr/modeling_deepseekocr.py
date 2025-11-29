@@ -1062,6 +1062,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                     outputs = outputs[:-len(stop_str)]
                 # re_match
                 outputs = outputs.strip()
+                outputs = outputs.replace("<｜end▁of▁sentence｜>","")
                 outputs_list.append(outputs)
             return outputs_list
         
