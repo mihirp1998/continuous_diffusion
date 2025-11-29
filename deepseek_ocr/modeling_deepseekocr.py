@@ -450,7 +450,6 @@ class DeepseekOCRModel(DeepseekV2Model):
         # import ipdb; ipdb.set_trace()
 
 
-
         if (sam_model is not None and (input_ids.shape[1] != 1 or self.training) and (torch.sum(images[0][1]).item() != 0 or image_features is not None)) :
 
             idx = 0
@@ -849,9 +848,7 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
             ratio = 1 - ((max(w, h) - min(w, h)) / (max(w, h)))
             image_transform=BasicImageTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True)
         else:
-            images = [None] * len(image_features)
-
-        
+            images = [None]
 
         valid_img_tokens = 0
         ratio = 1
@@ -1039,11 +1036,12 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
         else:
             with torch.autocast("cuda", dtype=torch_dtype):
                 with torch.no_grad():
+                    batch_size = image_features.shape[0]
                     output_ids = self.generate(
-                        input_ids.unsqueeze(0).cuda(),
-                        images=[(images_crop.cuda(), images_ori.cuda())],
-                        images_seq_mask = images_seq_mask.unsqueeze(0).cuda(),
-                        images_spatial_crop = images_spatial_crop,
+                        input_ids.unsqueeze(0).cuda().repeat(batch_size, 1),
+                        images=[(images_crop.cuda().repeat(batch_size, 1, 1, 1), images_ori.cuda().repeat(batch_size, 1, 1, 1))],
+                        images_seq_mask = images_seq_mask.unsqueeze(0).cuda().repeat(batch_size, 1),
+                        images_spatial_crop = images_spatial_crop.repeat(batch_size, 1),
                         image_features = image_features,
                         # do_sample=False,
                         # num_beams = 1,
@@ -1055,14 +1053,17 @@ class DeepseekOCRForCausalLM(DeepseekV2ForCausalLM):
                         )
         
         if '<image>' in conversation[0]['content'] and eval_mode:
-                outputs = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).cuda().shape[1]:])
+            batch_size = output_ids.shape[0]
+            outputs_list = []
+            for bs_idx in range(batch_size):
+                outputs = tokenizer.decode(output_ids[bs_idx, input_ids.unsqueeze(0).cuda().shape[1]:])
                 stop_str = '<｜end▁of▁sentence｜>'
                 if outputs.endswith(stop_str):
                     outputs = outputs[:-len(stop_str)]
                 # re_match
                 outputs = outputs.strip()
-
-                return outputs
+                outputs_list.append(outputs)
+            return outputs_list
         
         if '<image>' in conversation[0]['content'] and test_compress:
             outputs = tokenizer.decode(output_ids[0, input_ids.unsqueeze(0).cuda().shape[1]:])

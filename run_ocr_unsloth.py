@@ -73,7 +73,8 @@ model, tokenizer = load_model_from_ddp_checkpoint("/grogu/user/mprabhud/dpsk_ckp
 FastVisionModel.for_inference(model) # Enable for inference!
 
 prompt = "<image>\nFree OCR. "
-image_file = '/home/mprabhud/phd_projects/continuous_diffusion/story_00000001.png'
+# image_file = '/home/mprabhud/phd_projects/continuous_diffusion/story_00000001.png'
+image_file = "/home/mprabhud/datasets/tiny_rawdata/00000.png"
 
 
 # prompt = "<image>\n<|grounding|>Convert the document to markdown. "
@@ -94,20 +95,35 @@ if use_image_tensor:
 
     # Add batch dimension and repeat to create batch of size 2
     image_tensor = image_tensor.unsqueeze(0)  # Shape: [1, C, H, W]
-    image_tensor = image_tensor.repeat(2, 1, 1, 1)  # Shape: [2, C, H, W]
+    # image_tensor = image_tensor.repeat(0, 1, 1, 1)  # Shape: [2, C, H, W]
 else:
     image_tensor = None
 
 # st()
+load_second_image = True
+if load_second_image:
+    image_file = "/home/mprabhud/datasets/tiny_rawdata/00001.png"
+    pil_image = Image.open(image_file).convert('RGB')
+    transform = transforms.ToTensor()
+    image_tensor_2 = transform(pil_image)  # Shape: [C, H, W], values in [0, 1]
+    image_tensor_2 = image_tensor_2.unsqueeze(0)  # Shape: [1, C, H, W]
+    # image_tensor = image_tensor.repeat(0, 1, 1, 1)  # Shape: [2, C, H, W]
+    image_tensor = torch.cat([image_tensor, image_tensor_2], dim=0)
 
+# st()
 # res = model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
 res = model.get_image_features(image_tensor.cuda())
 # st()
 # res = model.get_image_features(tokenizer, prompt=prompt, image_tensor=image_tensor, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True, return_image_features = True)
-res[0] = res[0] + torch.randn_like(res[0]) *0.5
-
-res_text =  model.infer(tokenizer,image_features=[res[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+# res[0] = res[0] + torch.randn_like(res[0]) *0.5
 # st()
+image_features_val = [res[:1]]
+image_features_val = res.unsqueeze(1)
+# st()
+# image_features_val = res.repea
+res_text =  model.infer(tokenizer,image_features=image_features_val, prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
+
+st()
 # res = model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
 # res_text =  model.infer(tokenizer,image_features=[res[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True)
 # res =model.infer(tokenizer, prompt=prompt, image_file=image_file, output_path = output_path, base_size = 1024, image_size = 640, crop_mode=True, eval_mode = True)
