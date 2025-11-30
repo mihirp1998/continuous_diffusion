@@ -26,6 +26,17 @@ echo "Master address: $MASTER_ADDR"
 echo "Number of nodes: $NUM_NODES"
 echo "Command: $COMMAND"
 
+# Determine the log file number once (on the local machine)
+cd /sharedfs/mihir/continuous_diffusion/JiT || exit
+mkdir -p logs
+LATEST=$(ls logs/*.log 2>/dev/null | sed "s/logs\/\([0-9]*\)\.log/\1/" | sort -n | tail -1)
+if [ -z "$LATEST" ]; then
+    NEXT=0
+else
+    NEXT=$((LATEST + 1))
+fi
+echo "Log file number: $NEXT"
+
 for i in "${!NODES[@]}"; do
     NODE_NUM=${NODES[$i]}
     HOSTNAME="${NODE_NUM}"
@@ -40,16 +51,12 @@ for i in "${!NODES[@]}"; do
         # 2. Now create logs directory inside the project folder
         mkdir -p logs
         
-        # 3. Find latest log based on the project folder logs
-        LATEST=\$(ls logs/*.log 2>/dev/null | sed \"s/logs\\/\\([0-9]*\\)\\.log/\\1/\" | sort -n | tail -1)
-        
-        if [ -z \"\$LATEST\" ]; then
-            NEXT=0
+        # 3. Set log file name based on node rank
+        if [ $NODE_RANK -eq 0 ]; then
+            LOG_FILE=\"logs/${NEXT}.log\"
         else
-            NEXT=\$((LATEST + 1))
+            LOG_FILE=\"logs/${NEXT}_${NODE_RANK}.log\"
         fi
-        
-        LOG_FILE=\"logs/\${NEXT}.log\"
         
         MAMBA_BIN=\"/sharedfs/mihir/bin/micromamba\"
         ENV_PATH=\"/sharedfs/mihir/micromamba/envs/rae\"
