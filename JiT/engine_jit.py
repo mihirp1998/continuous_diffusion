@@ -152,6 +152,7 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
             
             if eval_model is not None:
                 if len(out_text) > 0:
+                    print(f"[Rank {misc.get_rank()}] out_text: ", out_text[0])
                     eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=256, padding=True).to(device)
                     with torch.no_grad():
                         eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
