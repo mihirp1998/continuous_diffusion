@@ -30,3 +30,4 @@ torchrun --nproc_per_node=1 --nnodes=1 main_jit.py exps=ocr_noise resume=../../j
 
 torchrun --nproc_per_node=1 --nnodes=1 main_jit.py exps=ocr_noise model="JiT-E-nb" online_eval=True
 
+torchrun --nproc_per_node=1 --nnodes=1 main_jit.py exps=ocr_noise model="JiT-E-nb"  eval_freq=1 do_gen_perplexity=True  online_eval=True training.num_examples=1000
