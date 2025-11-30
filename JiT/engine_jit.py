@@ -145,17 +145,25 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
             sampled_images = sampled_images.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
             # sampled_images = input_images.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
             out_text = encoder.infer(encoder_tokenizer,image_features=sampled_images.unsqueeze(1), prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True,  max_new_tokens=256)
+            # out_text = [''] * len(out_text)
             
-            # st()
+            out_text = [text_val for text_val in out_text if text_val != '']
+            
+            
             if eval_model is not None:
-                eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=256, padding=True).to(device)
-                with torch.no_grad():
-                    eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
-                loss = eval_outputs.loss
-                perplexity = torch.exp(loss).item()
-                all_perplexities.append(perplexity)
-                print("perplexity: ", perplexity, "loss: ", loss)
-            print("generated text: ", out_text[0])
+                if len(out_text) > 0:
+                    eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=256, padding=True).to(device)
+                    with torch.no_grad():
+                        eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
+                    loss = eval_outputs.loss
+                    perplexity = torch.exp(loss).item()
+                    all_perplexities.append(perplexity)
+                    print("perplexity: ", perplexity, "loss: ", loss, "eval_inputs: ", eval_inputs.input_ids, out_text)
+                    print("generated text: ", out_text[0])
+                else:
+                    all_perplexities.append(1000000)
+            
+            
             # st()
         else:
             # denormalize images
@@ -174,7 +182,7 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
 
     torch.distributed.barrier()
     # st()
-    print("checking 2")
+    # print("checking 2")
     # aggregate perplexities across all processes
     if args.txt_modeling and eval_model is not None:
         print("checking perplexity")
