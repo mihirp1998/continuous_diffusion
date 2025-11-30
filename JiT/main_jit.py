@@ -60,6 +60,9 @@ def main(cfg: DictConfig):
             dir=args.output_dir
         )
         log_writer = wandb
+        args.output_dir = f"{args.output_dir}/{wandb.run.name}"
+        os.makedirs(args.output_dir, exist_ok=True)
+        # st()
     else:
         log_writer = None
     
@@ -138,6 +141,9 @@ def main(cfg: DictConfig):
         eval_tokenizer = AutoTokenizer.from_pretrained("gpt2")
         eval_tokenizer.pad_token = eval_tokenizer.eos_token
         eval_model.eval().to(device)
+    else:
+        eval_model = None
+        eval_tokenizer = None
 
 
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
@@ -210,7 +216,7 @@ def main(cfg: DictConfig):
         if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
             torch.cuda.empty_cache()
             with torch.no_grad():
-                evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer, device=device, encoder=encoder, encoder_tokenizer=encoder_tokenizer, input_images=x)
+                evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer, device=device, encoder=encoder, encoder_tokenizer=encoder_tokenizer, input_images=x, eval_model=eval_model, eval_tokenizer=eval_tokenizer)
             torch.cuda.empty_cache()
 
     total_time = time.time() - start_time

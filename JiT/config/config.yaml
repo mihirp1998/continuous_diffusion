@@ -44,7 +44,7 @@ num_sampling_steps: 50
 cfg: 2.9
 interval_min: 0.1
 interval_max: 1.0
-num_images: 50000
+num_images: 1000
 eval_freq: 40
 online_eval: true
 eval_ema: true

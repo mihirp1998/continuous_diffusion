@@ -144,15 +144,18 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
             
             sampled_images = sampled_images.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
             # sampled_images = input_images.flatten(2).permute(0, 2, 1).to(torch.bfloat16)
-            out_text = encoder.infer(encoder_tokenizer,image_features=[sampled_images[:1]], prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True,  max_new_tokens=256)
+            out_text = encoder.infer(encoder_tokenizer,image_features=sampled_images.unsqueeze(1), prompt=prompt, base_size = 512, image_size = 512, crop_mode = False, eval_mode = True,  max_new_tokens=256)
+            
+            # st()
             if eval_model is not None:
-                eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=1024).to(device)
-                eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
+                eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=256, padding=True).to(device)
+                with torch.no_grad():
+                    eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
                 loss = eval_outputs.loss
                 perplexity = torch.exp(loss).item()
                 all_perplexities.append(perplexity)
-                print("perplexity: ", perplexity)
-            print("generated text: ", out_text)
+                print("perplexity: ", perplexity, "loss: ", loss)
+            print("generated text: ", out_text[0])
             # st()
         else:
             # denormalize images
@@ -170,9 +173,24 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
                 cv2.imwrite(os.path.join(save_folder, '{}.png'.format(str(img_id).zfill(5))), gen_img)
 
     torch.distributed.barrier()
-
-    if eval_model is not None:
-        print("Average perplexity: ", np.mean(all_perplexities), "Std: ", np.std(all_perplexities))
+    # st()
+    print("checking 2")
+    # aggregate perplexities across all processes
+    if args.txt_modeling and eval_model is not None:
+        print("checking perplexity")
+        if len(all_perplexities) > 0 and not np.isnan(np.mean(all_perplexities)):
+            print("all_perplexities: ", all_perplexities)
+            local_mean = torch.tensor([np.mean(all_perplexities)], device=device).to(torch.float32)
+            all_means = [torch.zeros(1, device=device) for _ in range(world_size)]
+            torch.distributed.all_gather(all_means, local_mean)
+            
+            if misc.get_rank() == 0:
+                global_mean = torch.stack(all_means).mean().item()
+                print("Average perplexity (all processes): ", global_mean)
+                
+                if log_writer is not None:
+                    log_writer.log({'perplexity_mean': global_mean, 'epoch': epoch}) 
+            print("Average perplexity: ", np.mean(all_perplexities), "Std: ", np.std(all_perplexities))
         
 
     # back to no ema
