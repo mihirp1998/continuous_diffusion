@@ -97,7 +97,12 @@ def main(cfg: DictConfig):
     if args.encoder == "ocr-noise":
         print("Loading OCR noise encoder")
         ckpt_dir = os.environ['CKPT_DIR']
-        encoder_model, encoder_tokenizer = load_model_from_ddp_checkpoint(f"{ckpt_dir}/dpsk_ckpts/quiet-grass-102/checkpoint-2000")
+        # st()
+        if args.ocr_path is None:
+            ocr_path = None
+        else:
+            ocr_path = f"{ckpt_dir}/{args.ocr_path}"
+        encoder_model, encoder_tokenizer = load_model_from_ddp_checkpoint(ocr_path)
         encoder_model.to(device)
         FastVisionModel.for_inference(encoder_model)         
         encoder = encoder_model

@@ -33,6 +33,7 @@ start_epoch: 0
 num_workers: 12
 pin_mem: true
 encoder: null
+ocr_path: dpsk_ckpts/quiet-grass-102/checkpoint-2000
 
 training:
   num_examples: 500000
