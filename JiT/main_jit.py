@@ -217,6 +217,7 @@ def main(cfg: DictConfig):
             torch.cuda.empty_cache()
             with torch.no_grad():
                 evaluate(model_without_ddp, args, epoch, batch_size=args.gen_bsz, log_writer=log_writer, device=device, encoder=encoder, encoder_tokenizer=encoder_tokenizer, input_images=x, eval_model=eval_model, eval_tokenizer=eval_tokenizer)
+            print("Done evaluating")
             torch.cuda.empty_cache()
 
     total_time = time.time() - start_time

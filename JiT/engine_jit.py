@@ -158,8 +158,6 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
                     loss = eval_outputs.loss
                     perplexity = torch.exp(loss).item()
                     all_perplexities.append(perplexity)
-                    print("perplexity: ", perplexity, "loss: ", loss, "eval_inputs: ", eval_inputs.input_ids, out_text)
-                    print("generated text: ", out_text[0])
                 else:
                     all_perplexities.append(1000000)
             
@@ -179,31 +177,43 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
                 gen_img = np.round(np.clip(sampled_images[b_id].numpy().transpose([1, 2, 0]) * 255, 0, 255))
                 gen_img = gen_img.astype(np.uint8)[:, :, ::-1]
                 cv2.imwrite(os.path.join(save_folder, '{}.png'.format(str(img_id).zfill(5))), gen_img)
-
+    
     torch.distributed.barrier()
     # st()
     # print("checking 2")
     # aggregate perplexities across all processes
     if args.txt_modeling and eval_model is not None:
-        print("checking perplexity")
+        print(f"[Rank {misc.get_rank()}] checking perplexity")
+        # Ensure all processes participate in the all_gather, even if they have no valid perplexities
         if len(all_perplexities) > 0 and not np.isnan(np.mean(all_perplexities)):
-            print("all_perplexities: ", all_perplexities)
             local_mean = torch.tensor([np.mean(all_perplexities)], device=device).to(torch.float32)
-            all_means = [torch.zeros(1, device=device) for _ in range(world_size)]
-            torch.distributed.all_gather(all_means, local_mean)
-            
-            if misc.get_rank() == 0:
-                global_mean = torch.stack(all_means).mean().item()
+            local_count = torch.tensor([1.0], device=device)
+        else:
+            local_mean = torch.tensor([0.0], device=device).to(torch.float32)
+            local_count = torch.tensor([0.0], device=device)
+        
+        all_means = [torch.zeros(1, device=device) for _ in range(world_size)]
+        all_counts = [torch.zeros(1, device=device) for _ in range(world_size)]
+        torch.distributed.all_gather(all_means, local_mean)
+        torch.distributed.all_gather(all_counts, local_count)
+        
+        if misc.get_rank() == 0:
+            total_count = torch.stack(all_counts).sum().item()
+            if total_count > 0:
+                global_mean = (torch.stack(all_means) * torch.stack(all_counts)).sum().item() / total_count
                 print("Average perplexity (all processes): ", global_mean)
                 
                 if log_writer is not None:
-                    log_writer.log({'perplexity_mean': global_mean, 'epoch': epoch}) 
-            print("Average perplexity: ", np.mean(all_perplexities), "Std: ", np.std(all_perplexities))
+                    log_writer.log({'perplexity_mean': global_mean, 'epoch': epoch})
+        
+        if len(all_perplexities) > 0:
+            print(f"[Rank {misc.get_rank()}] Average perplexity: ", np.mean(all_perplexities), "Std: ", np.std(all_perplexities))
         
 
     # back to no ema
-    print("Switch back from ema")
+    print(f"[Rank {misc.get_rank()}] Switch back from ema")
     model_without_ddp.load_state_dict(model_state_dict)
+    print(f"[Rank {misc.get_rank()}] loaded model state dict")
     
     if not args.txt_modeling:
         # compute FID and IS
@@ -231,5 +241,6 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
             log_writer.log({'fid{}'.format(postfix): fid, 'is{}'.format(postfix): inception_score, 'epoch': epoch})
             print("FID: {:.4f}, Inception Score: {:.4f}".format(fid, inception_score))
             shutil.rmtree(save_folder)
-
+    print(f"[Rank {misc.get_rank()}] before final barrier")
     torch.distributed.barrier()
+    print(f"[Rank {misc.get_rank()}] after final barrier")
