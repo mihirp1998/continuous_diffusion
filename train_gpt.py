@@ -138,8 +138,8 @@ class GenerativePerplexityCallback(TrainerCallback):
             # Move eval model to same device as training model
             self.eval_model.to(model.device)
             
-            total_perplexity = 0
-            num_samples = 0
+            total_loss = 0
+            total_tokens = 0
             
             for prompt in self.prompts:
                 inputs = self.tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -160,18 +160,23 @@ class GenerativePerplexityCallback(TrainerCallback):
                     
                     # Evaluate perplexity using pretrained GPT-2
                     eval_inputs = self.eval_tokenizer(generated_text, return_tensors="pt", truncation=True, max_length=1024).to(model.device)
+                    labels = eval_inputs.input_ids.clone()
+                    if self.eval_tokenizer.pad_token_id is not None:
+                        labels[labels == self.eval_tokenizer.pad_token_id] = -100
                     
                     # Get model outputs for perplexity calculation
-                    eval_outputs = self.eval_model(**eval_inputs, labels=eval_inputs.input_ids)
-                    loss = eval_outputs.loss
+                    eval_outputs = self.eval_model(**eval_inputs, labels=labels)
                     
-                    # Calculate perplexity (exp of loss)
-                    perplexity = torch.exp(loss).item()
-                    total_perplexity += perplexity
-                    num_samples += 1
+                    # Count non-ignored tokens and accumulate loss properly
+                    n_tokens = (labels != -100).sum().item()
+                    
+                    # The loss is already averaged, so multiply by n_tokens to get sum of losses
+                    total_loss += eval_outputs.loss.item() * n_tokens
+                    total_tokens += n_tokens
             
-            # Calculate average perplexity
-            avg_perplexity = total_perplexity / num_samples
+            # Calculate average perplexity properly
+            global_mean = total_loss / total_tokens  # NLL per token
+            avg_perplexity = np.exp(global_mean)
             
             print(f"Average Generative Perplexity (GPT-2 eval) at Step {state.global_step}: {avg_perplexity:.4f}")
             

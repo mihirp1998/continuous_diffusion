@@ -1,3 +1,10 @@
+## install personal
+
+pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+pip install ipdb omegaconf opencv-python unsloth einops torch_fidelity hydra-core
+
+
+
 ## Just image Transformer (JiT) for Pixel-space Diffusion
 
 [![arXiv](https://img.shields.io/badge/arXiv%20paper-2511.13720-b31b1b.svg)](https://arxiv.org/abs/2511.13720)&nbsp;

@@ -123,7 +123,8 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
         class_label_gen_world = np.arange(0, class_num).repeat(args.num_images // class_num)
         class_label_gen_world = np.hstack([class_label_gen_world, np.zeros(50000)])
     # st()
-    all_perplexities = []
+    total_loss = 0
+    total_tokens = 0
     for i in range(num_steps):
         print("Generation step {}/{}".format(i, num_steps))
 
@@ -154,13 +155,25 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
                 if len(out_text) > 0:
                     print(f"[Rank {misc.get_rank()}] out_text: ", out_text[0])
                     eval_inputs = eval_tokenizer(out_text, return_tensors="pt", truncation=True, max_length=256, padding=True).to(device)
+                    labels = eval_inputs.input_ids.clone()
+                    if eval_tokenizer.pad_token_id is not None:
+                        labels[labels == eval_tokenizer.pad_token_id] = -100                    
+                    
                     with torch.no_grad():
-                        eval_outputs = eval_model(**eval_inputs, labels=eval_inputs.input_ids)
-                    loss = eval_outputs.loss
-                    perplexity = torch.exp(loss).item()
-                    all_perplexities.append(perplexity)
-                else:
-                    all_perplexities.append(1000000)
+                        eval_outputs = eval_model(**eval_inputs, labels=labels)
+                    
+                    # Bug fix: eval_outputs.loss is already averaged over tokens, so we need to 
+                    # compute the sum of losses properly. The loss returned by HuggingFace models
+                    # is averaged over non-ignored tokens, so we need to count only non-ignored tokens.
+                    n_tokens = (labels != -100).sum().item()  # count only non-ignored tokens
+                    
+                    # The loss is already averaged, so multiply by n_tokens to get sum of losses
+                    total_loss += eval_outputs.loss.item() * n_tokens
+                    total_tokens += n_tokens                    
+                    # perplexity = torch.exp(loss).item()
+                    # all_perplexities.append(perplexity)
+                # else:
+                #     all_perplexities.append(None)
             
             
             # st()
@@ -184,32 +197,21 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None, dev
     # print("checking 2")
     # aggregate perplexities across all processes
     if args.txt_modeling and eval_model is not None:
-        print(f"[Rank {misc.get_rank()}] checking perplexity")
+        # print(f"[Rank {misc.get_rank()}] checking perplexity")
         # Ensure all processes participate in the all_gather, even if they have no valid perplexities
-        if len(all_perplexities) > 0 and not np.isnan(np.mean(all_perplexities)):
-            local_mean = torch.tensor([np.mean(all_perplexities)], device=device).to(torch.float32)
-            local_count = torch.tensor([1.0], device=device)
-        else:
-            local_mean = torch.tensor([0.0], device=device).to(torch.float32)
-            local_count = torch.tensor([0.0], device=device)
+        loss_tensor = torch.tensor([total_loss], device=device, dtype=torch.float64)
+        tok_tensor  = torch.tensor([total_tokens], device=device, dtype=torch.float64)
+
+
+        torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(tok_tensor,  op=torch.distributed.ReduceOp.SUM)        
         
-        all_means = [torch.zeros(1, device=device) for _ in range(world_size)]
-        all_counts = [torch.zeros(1, device=device) for _ in range(world_size)]
-        torch.distributed.all_gather(all_means, local_mean)
-        torch.distributed.all_gather(all_counts, local_count)
-        
-        if misc.get_rank() == 0:
-            total_count = torch.stack(all_counts).sum().item()
-            if total_count > 0:
-                global_mean = (torch.stack(all_means) * torch.stack(all_counts)).sum().item() / total_count
-                print("Average perplexity (all processes): ", global_mean)
-                
-                if log_writer is not None:
-                    log_writer.log({'perplexity_mean': global_mean, 'epoch': epoch})
-        
-        if len(all_perplexities) > 0:
-            print(f"[Rank {misc.get_rank()}] Average perplexity: ", np.mean(all_perplexities), "Std: ", np.std(all_perplexities))
-        
+        if misc.get_rank() == 0 and tok_tensor.item() > 0:
+            global_mean = loss_tensor.item() / tok_tensor.item()      # NLL per token
+            perplexity = math.exp(global_mean)
+            print("Average nll loss (all processes): ", global_mean, "Perplexity: ", perplexity)
+            if log_writer is not None:
+                log_writer.log({'nll_loss_mean': global_mean, "perplexity": perplexity, 'epoch': epoch})
 
     # back to no ema
     print(f"[Rank {misc.get_rank()}] Switch back from ema")
